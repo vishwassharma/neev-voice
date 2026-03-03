@@ -16,9 +16,16 @@
           portaudio
         ];
 
-        # Set LD_LIBRARY_PATH so sounddevice can find PortAudio at runtime
+        # Set LD_LIBRARY_PATH so native Python wheels can find shared libs:
+        #   stdenv.cc.cc.lib → libstdc++.so.6 (numpy, scipy C extensions)
+        #   portaudio        → libportaudio.so (sounddevice)
+        #   zlib             → libz.so (various Python packages)
         shellHook = ''
-          export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.portaudio ]}:$LD_LIBRARY_PATH"
+          export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
+            pkgs.stdenv.cc.cc.lib
+            pkgs.portaudio
+            pkgs.zlib
+          ]}:$LD_LIBRARY_PATH"
         '';
       in
       {
