@@ -9,6 +9,7 @@ import json
 import pytest
 
 from neev_voice.config import (
+    _API_KEY_FALLBACK_ENV,
     API_KEY_FIELDS,
     CONFIG_DIR,
     CONFIG_FILE,
@@ -487,3 +488,71 @@ class TestCreateDefaultConfig:
         data = json.loads(cfg.read_text())
         for key in API_KEY_FIELDS:
             assert key not in data
+
+
+class TestAPIKeyFallbackEnvVars:
+    """Tests for unprefixed API key env var fallbacks.
+
+    Verifies that standard env vars (SARVAM_API_KEY, ANTHROPIC_API_KEY,
+    OPENROUTER_API_KEY) are accepted as fallbacks when the NEEV_-prefixed
+    versions are not set.
+    """
+
+    # --- env vars to always clean up ---
+    _ALL_ENV_VARS = [
+        "NEEV_SARVAM_API_KEY",
+        "NEEV_ANTHROPIC_API_KEY",
+        "NEEV_OPENROUTER_API_KEY",
+        "SARVAM_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+    ]
+
+    @pytest.fixture(autouse=True)
+    def _clean_env(self, monkeypatch):
+        """Remove all API-key env vars before each test."""
+        for var in self._ALL_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+    def test_fallback_mapping_covers_all_api_key_fields(self):
+        """Test _API_KEY_FALLBACK_ENV has an entry for every API_KEY_FIELDS member."""
+        assert set(_API_KEY_FALLBACK_ENV.keys()) == API_KEY_FIELDS
+
+    def test_unprefixed_sarvam_api_key_loads(self, monkeypatch):
+        """Test SARVAM_API_KEY is picked up when NEEV_SARVAM_API_KEY is absent."""
+        monkeypatch.setenv("SARVAM_API_KEY", "sk-sarvam-fallback")
+        settings = NeevSettings(_env_file=None)
+        assert settings.sarvam_api_key == "sk-sarvam-fallback"
+
+    def test_unprefixed_anthropic_api_key_loads(self, monkeypatch):
+        """Test ANTHROPIC_API_KEY is picked up when NEEV_ANTHROPIC_API_KEY is absent."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fallback")
+        settings = NeevSettings(_env_file=None)
+        assert settings.anthropic_api_key == "sk-ant-fallback"
+
+    def test_unprefixed_openrouter_api_key_loads(self, monkeypatch):
+        """Test OPENROUTER_API_KEY is picked up when NEEV_OPENROUTER_API_KEY is absent."""
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-fallback")
+        settings = NeevSettings(_env_file=None)
+        assert settings.openrouter_api_key == "sk-or-fallback"
+
+    def test_prefixed_overrides_unprefixed(self, monkeypatch):
+        """Test NEEV_-prefixed env var takes priority over unprefixed."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fallback")
+        monkeypatch.setenv("NEEV_ANTHROPIC_API_KEY", "sk-ant-prefixed")
+        settings = NeevSettings(_env_file=None)
+        assert settings.anthropic_api_key == "sk-ant-prefixed"
+
+    def test_fallback_ignored_when_prefixed_is_set(self, monkeypatch):
+        """Test unprefixed fallback does not override an existing NEEV_ value."""
+        monkeypatch.setenv("NEEV_SARVAM_API_KEY", "sk-neev-primary")
+        monkeypatch.setenv("SARVAM_API_KEY", "sk-sarvam-fallback")
+        settings = NeevSettings(_env_file=None)
+        assert settings.sarvam_api_key == "sk-neev-primary"
+
+    def test_no_fallback_for_non_api_fields(self, monkeypatch):
+        """Test non-API fields do not get unprefixed fallback behavior."""
+        monkeypatch.setenv("CLAUDE_MODEL", "opus")
+        settings = NeevSettings(_env_file=None)
+        # Should remain the default, not pick up CLAUDE_MODEL
+        assert settings.claude_model == "sonnet"

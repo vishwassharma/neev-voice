@@ -15,7 +15,7 @@ A Python CLI voice agent for Hindi-English mixed speech. Listens to user voice, 
 
 ## Requirements
 
-- Python >= 3.11
+- Python >= 3.12
 - [uv](https://docs.astral.sh/uv/) package manager
 - A working microphone (for push-to-talk)
 - Sarvam AI API key (for STT)
@@ -72,6 +72,11 @@ export NEEV_ANTHROPIC_API_KEY=your-key
 # or for OpenRouter:
 export NEEV_OPENROUTER_API_KEY=your-key
 ```
+
+Standard unprefixed env vars are also accepted as fallbacks, so if you already
+have `ANTHROPIC_API_KEY`, `SARVAM_API_KEY`, or `OPENROUTER_API_KEY` set from
+other tools, neev will pick them up automatically. The `NEEV_`-prefixed
+versions always take priority when both are set.
 
 ## Usage
 

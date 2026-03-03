@@ -3,15 +3,17 @@
 Uses pydantic-settings to load configuration from environment variables,
 .env files, and a persistent JSON config at ~/.config/neev/voice.json.
 
-Priority (high to low): init kwargs > NEEV_* env vars > .env file > JSON config.
+Priority (high to low): init kwargs > NEEV_* env vars > .env file >
+unprefixed API key env vars (SARVAM_API_KEY, etc.) > JSON config.
 """
 
 import json
+import os
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 CONFIG_DIR = Path.home() / ".config" / "neev"
@@ -28,6 +30,17 @@ API_KEY_FIELDS: frozenset[str] = frozenset(
 
 These must not be stored in the JSON config file. Set them via
 environment variables (NEEV_SARVAM_API_KEY, etc.) or a ``.env`` file.
+"""
+
+_API_KEY_FALLBACK_ENV: dict[str, str] = {
+    "sarvam_api_key": "SARVAM_API_KEY",
+    "anthropic_api_key": "ANTHROPIC_API_KEY",
+    "openrouter_api_key": "OPENROUTER_API_KEY",
+}
+"""Mapping of API key field names to their unprefixed environment variable names.
+
+When the NEEV_-prefixed env var is not set, the unprefixed standard name
+is checked as a fallback (e.g. ``ANTHROPIC_API_KEY`` for ``anthropic_api_key``).
 """
 
 
@@ -74,7 +87,8 @@ class NeevSettings(BaseSettings):
     """Application settings for Neev Voice.
 
     Settings are loaded with the following priority (high to low):
-    init kwargs > NEEV_* env vars > .env file > ~/.config/neev/voice.json.
+    init kwargs > NEEV_* env vars > .env file >
+    unprefixed API key env vars (SARVAM_API_KEY, etc.) > ~/.config/neev/voice.json.
 
     Attributes:
         sarvam_api_key: API key for Sarvam AI services.
@@ -140,6 +154,29 @@ class NeevSettings(BaseSettings):
         default="",
         description="OpenRouter API key (used when llm_provider=openrouter)",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_api_key_fallbacks(cls, values: dict[str, Any]) -> dict[str, Any]:
+        """Inject unprefixed API key env vars as fallbacks.
+
+        For each API key field, if the merged settings sources did not
+        provide a non-empty value, check the standard unprefixed env var
+        (e.g. ``ANTHROPIC_API_KEY``) and use it as a fallback.
+
+        Args:
+            values: Merged settings dict from all sources.
+
+        Returns:
+            The settings dict, possibly augmented with fallback API keys.
+        """
+        for field_name, env_var in _API_KEY_FALLBACK_ENV.items():
+            current = values.get(field_name)
+            if not current:
+                fallback = os.environ.get(env_var, "")
+                if fallback:
+                    values[field_name] = fallback
+        return values
 
     @classmethod
     def settings_customise_sources(
@@ -249,9 +286,11 @@ def update_config_value(key: str, value: str, config_file: Path = CONFIG_FILE) -
         raise KeyError(f"Unknown setting '{key}'. Valid settings: {', '.join(valid_keys)}")
 
     if key in API_KEY_FIELDS:
+        fallback_env = _API_KEY_FALLBACK_ENV.get(key, "")
+        hint = f" or {fallback_env}" if fallback_env else ""
         raise KeyError(
             f"'{key}' is an API key and must not be stored in the config file. "
-            f"Set it via environment variable (NEEV_{key.upper()}) or .env file."
+            f"Set it via environment variable (NEEV_{key.upper()}{hint}) or .env file."
         )
 
     field_info = fields[key]
