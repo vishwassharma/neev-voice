@@ -21,6 +21,8 @@ jobs:
 
       - name: Cache Nix store
         uses: DeterminateSystems/magic-nix-cache-action@main
+        with:
+          use-flakehub: false
 
       - name: Install dependencies
         run: nix develop .#ci --command uv sync --group dev --python ${{ matrix.python-version }}
