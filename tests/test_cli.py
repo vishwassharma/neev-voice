@@ -1,5 +1,6 @@
 """Integration tests for CLI commands using Typer's CliRunner."""
 
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -595,13 +596,16 @@ class TestListenWithMode:
         """Test listen --help mentions the --mode option."""
         result = runner.invoke(app, ["listen", "--help"])
         assert result.exit_code == 0
-        assert "--mode" in result.output
+        # Strip ANSI escape codes for CI where Rich renders styled output
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--mode" in plain
 
     def test_discuss_help_shows_mode_option(self):
         """Test discuss --help mentions the --mode option."""
         result = runner.invoke(app, ["discuss", "--help"])
         assert result.exit_code == 0
-        assert "--mode" in result.output
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--mode" in plain
 
 
 class TestBuildDiscussionResultMd:
