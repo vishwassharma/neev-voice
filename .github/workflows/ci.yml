@@ -28,5 +28,11 @@ jobs:
       - name: Run linter
         run: nix develop .#ci --command uv run ruff check src/ tests/
 
+      - name: Run type checker
+        run: nix develop .#ci --command uv run mypy src/neev_voice/
+
       - name: Run tests
         run: nix develop .#ci --command uv run pytest --tb=short -q
+
+      - name: Security audit
+        run: nix develop .#ci --command uvx pip-audit

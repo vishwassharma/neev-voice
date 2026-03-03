@@ -10,6 +10,8 @@ from pathlib import Path
 import numpy as np
 from scipy.io import wavfile
 
+__all__ = ["TTSProvider"]
+
 
 class TTSProvider(ABC):
     """Abstract base class for Text-to-Speech providers.

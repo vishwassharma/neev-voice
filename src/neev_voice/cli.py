@@ -5,11 +5,14 @@ configuration display, and provider listing using Typer and Rich.
 Uses push-to-talk (hold SPACEBAR, release to pause, ENTER to send).
 """
 
+from __future__ import annotations
+
 import asyncio
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 
+import structlog
 import typer
 from rich.console import Console
 from rich.live import Live
@@ -28,6 +31,15 @@ from neev_voice.config import (
     create_default_config,
     update_config_value,
 )
+from neev_voice.exceptions import NeevConfigError, NeevError
+from neev_voice.log import configure_logging
+
+if TYPE_CHECKING:
+    from neev_voice.intent.extractor import ExtractedIntent
+
+logger = structlog.get_logger(__name__)
+
+__all__ = ["app", "config_app"]
 
 app = typer.Typer(
     name="neev",
@@ -60,9 +72,9 @@ def _get_settings() -> NeevSettings:
 
 @app.command()
 def listen(
-    stt: Optional[str] = typer.Option(None, "--stt", help="STT provider (sarvam)"),
-    tts: Optional[str] = typer.Option(None, "--tts", help="TTS provider (sarvam, edge)"),
-    mode: Optional[str] = typer.Option(
+    stt: str | None = typer.Option(None, "--stt", help="STT provider (sarvam)"),
+    tts: str | None = typer.Option(None, "--tts", help="TTS provider (sarvam, edge)"),
+    mode: str | None = typer.Option(
         None,
         "--mode",
         "-m",
@@ -121,7 +133,9 @@ async def _listen_async(
     from neev_voice.scratch import ScratchPad
     from neev_voice.stt.sarvam import get_stt_provider
 
+    configure_logging(json_logs=not verbose)
     settings = _get_settings()
+    logger.info("listen_command_started")
 
     if mode:
         try:
@@ -129,15 +143,15 @@ async def _listen_async(
         except ValueError:
             available = ", ".join(m.value for m in SarvamSTTMode)
             console.print(f"[red]Error:[/red] Unknown STT mode '{mode}'. Available: {available}")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
     provider_name = stt_name or settings.stt_provider.value
 
     try:
         stt_provider = get_stt_provider(provider_name, settings)
-    except ValueError as e:
+    except (ValueError, NeevConfigError) as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     scratch = ScratchPad("listen")
     recorder = AudioRecorder(settings=settings)
@@ -160,25 +174,28 @@ async def _listen_async(
             segment = await recorder.record_push_to_talk(on_state_change=update_display)
     except RecordingCancelledError:
         console.print("[yellow]Recording cancelled.[/yellow]")
-        raise typer.Exit(0)
+        raise typer.Exit(0) from None
     except RuntimeError as e:
         console.print(f"[red]Recording error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     if verbose:
         console.print(f"[dim]Recorded {segment.duration:.1f}s of audio[/dim]")
 
     wav_path = AudioRecorder.save_wav(segment)
 
-    # Copy audio to scratch pad
-    shutil.copy2(str(wav_path), str(scratch.audio_path))
+    try:
+        # Copy audio to scratch pad
+        shutil.copy2(str(wav_path), str(scratch.audio_path))
 
-    with console.status("[bold green]Transcribing..."):
-        try:
-            transcription = await stt_provider.transcribe(wav_path)
-        except RuntimeError as e:
-            console.print(f"[red]Transcription error:[/red] {e}")
-            raise typer.Exit(1)
+        with console.status("[bold green]Transcribing..."):
+            try:
+                transcription = await stt_provider.transcribe(wav_path)
+            except (RuntimeError, NeevError) as e:
+                console.print(f"[red]Transcription error:[/red] {e}")
+                raise typer.Exit(1) from None
+    finally:
+        wav_path.unlink(missing_ok=True)
 
     scratch.save_transcription(transcription.text)
     console.print(Panel(transcription.text, title="Transcription", border_style="green"))
@@ -193,13 +210,9 @@ async def _listen_async(
     with console.status("[bold blue]Extracting intent..."):
         try:
             intent = await extractor.extract(transcription.text)
-        except RuntimeError as e:
+        except (RuntimeError, NeevError) as e:
             console.print(f"[red]Intent extraction error:[/red] {e}")
-            raise typer.Exit(1)
-
-    # Save enriched output if the agent produced content
-    if hasattr(extractor, "_last_enriched") and extractor._last_enriched:
-        scratch.save_enriched(extractor._last_enriched)
+            raise typer.Exit(1) from None
 
     scratch.save_metadata(
         transcription=transcription.text,
@@ -214,7 +227,7 @@ async def _listen_async(
         console.print(f"[dim]Artifacts saved to: {scratch.flow_dir}[/dim]")
 
 
-def _display_intent(intent: "ExtractedIntent") -> None:  # noqa: F821
+def _display_intent(intent: ExtractedIntent) -> None:
     """Display extracted intent with Rich formatting.
 
     Args:
@@ -249,9 +262,9 @@ def _display_intent(intent: "ExtractedIntent") -> None:  # noqa: F821
 @app.command()
 def discuss(
     document_path: str = typer.Argument(..., help="Path to document to discuss"),
-    stt: Optional[str] = typer.Option(None, "--stt", help="STT provider"),
-    tts: Optional[str] = typer.Option(None, "--tts", help="TTS provider"),
-    mode: Optional[str] = typer.Option(
+    stt: str | None = typer.Option(None, "--stt", help="STT provider"),
+    tts: str | None = typer.Option(None, "--tts", help="TTS provider"),
+    mode: str | None = typer.Option(
         None,
         "--mode",
         "-m",
@@ -295,7 +308,9 @@ async def _discuss_async(
     from neev_voice.stt.sarvam import get_stt_provider
     from neev_voice.tts.edge import get_tts_provider
 
+    configure_logging(json_logs=not verbose)
     settings = _get_settings()
+    logger.info("discuss_command_started", document=document_path)
 
     if mode:
         try:
@@ -303,7 +318,7 @@ async def _discuss_async(
         except ValueError:
             available = ", ".join(m.value for m in SarvamSTTMode)
             console.print(f"[red]Error:[/red] Unknown STT mode '{mode}'. Available: {available}")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
     stt_provider_name = stt_name or settings.stt_provider.value
     tts_provider_name = tts_name or settings.tts_provider.value
@@ -311,19 +326,11 @@ async def _discuss_async(
     try:
         stt_provider = get_stt_provider(stt_provider_name, settings)
         tts_provider = get_tts_provider(tts_provider_name, settings)
-    except ValueError as e:
+    except (ValueError, NeevConfigError) as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     scratch = ScratchPad("discussion")
-
-    # Read latest listen folder for context (reserved for future agent integration)
-    latest_listen = ScratchPad.get_latest_folder("listen")
-    _context = None
-    if latest_listen:
-        transcription_file = latest_listen / "transcription.txt"
-        if transcription_file.exists():
-            _context = transcription_file.read_text(encoding="utf-8")
 
     recorder = AudioRecorder(settings=settings)
     agent = EnrichmentAgent(settings, scratch_path=str(scratch.flow_dir))
@@ -344,7 +351,7 @@ async def _discuss_async(
         results = await manager.run_discussion(doc_path)
     except FileNotFoundError as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     # Save section results to scratch pad
     for i, result in enumerate(results, 1):
@@ -524,10 +531,10 @@ def config_set(
         console.print(f"[green]Set[/green] {key} = {value}")
     except KeyError as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
-    except ValueError as e:
+        raise typer.Exit(1) from None
+    except (ValueError, NeevConfigError) as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 @config_app.command("init")
@@ -544,7 +551,7 @@ def config_init(
         console.print(f"[green]Created config file:[/green] {path}")
     except FileExistsError as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 @config_app.command("path")
@@ -573,14 +580,14 @@ def providers() -> None:
         notes = "Requires NEEV_SARVAM_API_KEY" if p == STTProviderType.SARVAM else ""
         table.add_row("STT", p.value, notes)
 
-    for p in TTSProviderType:
-        if p == TTSProviderType.SARVAM:
+    for tp in TTSProviderType:
+        if tp == TTSProviderType.SARVAM:
             notes = "Requires NEEV_SARVAM_API_KEY"
-        elif p == TTSProviderType.EDGE:
+        elif tp == TTSProviderType.EDGE:
             notes = "Free, no API key needed"
         else:
             notes = ""
-        table.add_row("TTS", p.value, notes)
+        table.add_row("TTS", tp.value, notes)
 
     console.print(table)
 

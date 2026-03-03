@@ -4,12 +4,25 @@ Provides Hindi text-to-speech using the edge-tts library
 with the hi-IN-SwaraNeural voice.
 """
 
+from __future__ import annotations
+
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import edge_tts
+import structlog
 
+from neev_voice.exceptions import NeevConfigError
 from neev_voice.tts.base import TTSProvider
+
+if TYPE_CHECKING:
+    from neev_voice.config import NeevSettings
+
+logger = structlog.get_logger(__name__)
+
+__all__ = ["DEFAULT_VOICE", "EdgeTTS", "get_tts_provider"]
 
 DEFAULT_VOICE = "hi-IN-SwaraNeural"
 
@@ -47,6 +60,8 @@ class EdgeTTS(TTSProvider):
         Raises:
             RuntimeError: If synthesis fails.
         """
+        logger.info("tts_synthesize_started", provider="edge", text_length=len(text))
+
         tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
         tmp.close()
         output_path = Path(tmp.name)
@@ -54,10 +69,11 @@ class EdgeTTS(TTSProvider):
         communicate = edge_tts.Communicate(text, self.voice)
         await communicate.save(str(output_path))
 
+        logger.debug("tts_synthesize_done", provider="edge", path=str(output_path))
         return output_path
 
 
-def get_tts_provider(name: str, settings: "NeevSettings | None" = None) -> TTSProvider:  # noqa: F821
+def get_tts_provider(name: str, settings: NeevSettings | None = None) -> TTSProvider:
     """Factory function to create a TTS provider by name.
 
     Args:
@@ -68,21 +84,22 @@ def get_tts_provider(name: str, settings: "NeevSettings | None" = None) -> TTSPr
         An instance of the requested TTS provider.
 
     Raises:
-        ValueError: If the provider name is not recognized.
+        NeevConfigError: If the provider name is not recognized.
     """
     from neev_voice.tts.sarvam import SarvamTTS
 
-    providers = {
-        "sarvam": lambda: (
-            SarvamTTS(settings)
-            if settings
-            else (_ for _ in ()).throw(ValueError("Settings required for Sarvam TTS provider"))
-        ),
+    def _make_sarvam() -> SarvamTTS:
+        if not settings:
+            raise NeevConfigError("Settings required for Sarvam TTS provider")
+        return SarvamTTS(settings)
+
+    providers: dict[str, Callable[[], TTSProvider]] = {
+        "sarvam": _make_sarvam,
         "edge": lambda: EdgeTTS(),
     }
 
     if name not in providers:
         available = ", ".join(providers.keys())
-        raise ValueError(f"Unknown TTS provider '{name}'. Available: {available}")
+        raise NeevConfigError(f"Unknown TTS provider '{name}'. Available: {available}")
 
     return providers[name]()

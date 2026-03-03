@@ -44,7 +44,7 @@ class TestScratchPadInit:
     def test_default_base_dir_used_when_none(self):
         """Test DEFAULT_BASE_DIR is used when base_dir is None."""
         # Don't actually create directories by checking the attribute
-        assert ScratchPad.DEFAULT_BASE_DIR == Path(".scratch/neev")
+        assert Path(".scratch/neev") == ScratchPad.DEFAULT_BASE_DIR
 
     def test_unique_dirs_per_instance(self, tmp_path):
         """Test each ScratchPad instance creates a unique directory."""

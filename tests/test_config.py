@@ -22,6 +22,7 @@ from neev_voice.config import (
     save_json_config,
     update_config_value,
 )
+from neev_voice.exceptions import NeevConfigError
 
 
 class TestConfigConstants:
@@ -135,11 +136,11 @@ class TestUpdateConfigValue:
         with pytest.raises(KeyError, match="Unknown setting 'bogus_key'"):
             update_config_value("bogus_key", "value", cfg)
 
-    def test_invalid_enum_value_raises_value_error(self, tmp_path):
-        """Test raises ValueError for invalid enum value."""
+    def test_invalid_enum_value_raises_config_error(self, tmp_path):
+        """Test raises NeevConfigError for invalid enum value."""
         cfg = tmp_path / "voice.json"
         save_json_config({}, cfg)
-        with pytest.raises(ValueError, match="Invalid value 'badmode'"):
+        with pytest.raises(NeevConfigError, match="Invalid value 'badmode'"):
             update_config_value("stt_mode", "badmode", cfg)
 
     def test_set_llm_api_base_value(self, tmp_path):
@@ -376,10 +377,10 @@ class TestUpdateConfigValueLLMProvider:
         assert data["llm_provider"] == "anthropic"
 
     def test_set_llm_provider_invalid_raises(self, tmp_path):
-        """Test setting llm_provider to invalid value raises ValueError."""
+        """Test setting llm_provider to invalid value raises NeevConfigError."""
         cfg = tmp_path / "voice.json"
         save_json_config({}, cfg)
-        with pytest.raises(ValueError, match="Invalid value 'badprovider'"):
+        with pytest.raises(NeevConfigError, match="Invalid value 'badprovider'"):
             update_config_value("llm_provider", "badprovider", cfg)
 
 

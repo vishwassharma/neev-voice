@@ -1,5 +1,6 @@
 """Tests for push-to-talk keyboard monitor module."""
 
+import contextlib
 import os
 import time
 from unittest.mock import MagicMock, patch
@@ -76,14 +77,10 @@ class FakeTTYStream:
 
     def close(self) -> None:
         """Close both ends of the pipe."""
-        try:
+        with contextlib.suppress(OSError):
             os.close(self.write_fd)
-        except OSError:
-            pass
-        try:
+        with contextlib.suppress(OSError):
             self._reader.close()
-        except OSError:
-            pass
 
 
 @pytest.fixture

@@ -7,12 +7,25 @@ structured summaries using the EnrichmentAgent (Claude Agent SDK).
 
 import json
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
+import structlog
+
+from neev_voice.exceptions import NeevLLMError
 from neev_voice.llm.agent import EnrichmentAgent
 
+logger = structlog.get_logger(__name__)
 
-class IntentCategory(str, Enum):
+__all__ = [
+    "DISCUSSION_INTENT_PROMPT",
+    "INTENT_EXTRACTION_PROMPT",
+    "ExtractedIntent",
+    "IntentCategory",
+    "IntentExtractor",
+]
+
+
+class IntentCategory(StrEnum):
     """Categories of user intent extracted from speech.
 
     Attributes:
@@ -119,11 +132,14 @@ class IntentExtractor:
             ExtractedIntent with category, summary, and key points.
 
         Raises:
-            RuntimeError: If Claude query or response parsing fails.
+            NeevLLMError: If Claude query or response parsing fails.
         """
+        logger.info("intent_extract_started", text_length=len(text))
         prompt = INTENT_EXTRACTION_PROMPT.format(text=text)
         response = await self.agent.enrich(prompt)
-        return self._parse_intent_response(response, text)
+        result = self._parse_intent_response(response, text)
+        logger.info("intent_extract_done", category=result.category.value)
+        return result
 
     async def extract_discussion_intent(self, text: str, section: str) -> ExtractedIntent:
         """Extract intent in a document discussion context.
@@ -139,11 +155,14 @@ class IntentExtractor:
             ExtractedIntent with discussion-specific classification.
 
         Raises:
-            RuntimeError: If Claude query or response parsing fails.
+            NeevLLMError: If Claude query or response parsing fails.
         """
+        logger.info("discussion_intent_started", text_length=len(text))
         prompt = DISCUSSION_INTENT_PROMPT.format(text=text, section=section)
         response = await self.agent.enrich(prompt)
-        return self._parse_intent_response(response, text)
+        result = self._parse_intent_response(response, text)
+        logger.info("discussion_intent_done", category=result.category.value)
+        return result
 
     @staticmethod
     def _parse_intent_response(response: str, raw_text: str) -> ExtractedIntent:
@@ -160,7 +179,7 @@ class IntentExtractor:
             Parsed ExtractedIntent.
 
         Raises:
-            RuntimeError: If the response cannot be parsed as valid JSON.
+            NeevLLMError: If the response cannot be parsed as valid JSON.
         """
         # Strip markdown code fences if present
         cleaned = response.strip()
@@ -173,7 +192,7 @@ class IntentExtractor:
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError as e:
-            raise RuntimeError(f"Failed to parse intent response: {e}\nRaw: {response}")
+            raise NeevLLMError(f"Failed to parse intent response: {e}\nRaw: {response}") from e
 
         category_str = data.get("category", "mixed")
         try:

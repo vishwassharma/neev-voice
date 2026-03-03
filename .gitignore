@@ -34,8 +34,5 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# uv
-uv.lock
-
 # Nix
 result

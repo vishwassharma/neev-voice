@@ -5,6 +5,7 @@ import json
 import pytest
 
 from neev_voice.config import NeevSettings
+from neev_voice.exceptions import NeevLLMError
 from neev_voice.intent.extractor import (
     ExtractedIntent,
     IntentCategory,
@@ -124,8 +125,8 @@ class TestParseIntentResponse:
         assert result.key_points == []
 
     def test_parse_invalid_json_raises(self):
-        """Test parsing invalid JSON raises RuntimeError."""
-        with pytest.raises(RuntimeError, match="Failed to parse"):
+        """Test parsing invalid JSON raises NeevLLMError."""
+        with pytest.raises(NeevLLMError, match="Failed to parse"):
             IntentExtractor._parse_intent_response("not json at all", "raw")
 
     def test_parse_agreement(self):

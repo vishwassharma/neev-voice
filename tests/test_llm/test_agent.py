@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from neev_voice.config import NeevSettings
+from neev_voice.exceptions import NeevConfigError
 from neev_voice.llm.agent import (
     ENRICHMENT_SYSTEM_PROMPT,
     ENRICHMENT_TEMPLATE,
@@ -132,9 +133,9 @@ class TestEnrichmentAgentEnrich:
     """Tests for EnrichmentAgent.enrich method."""
 
     async def test_enrich_missing_api_key_raises(self, settings_no_key):
-        """Test enrich raises ValueError when API key is not set."""
+        """Test enrich raises NeevConfigError when API key is not set."""
         agent = EnrichmentAgent(settings_no_key)
-        with pytest.raises(ValueError, match="LLM API key is required"):
+        with pytest.raises(NeevConfigError, match="LLM API key is required"):
             await agent.enrich("some text")
 
     async def test_enrich_calls_query_with_correct_options(self, agent, mocker):
@@ -164,7 +165,7 @@ class TestEnrichmentAgentEnrich:
             """Capture options and yield nothing."""
             captured_options["options"] = options
             return
-            yield  # noqa: F841 - makes it an async generator
+            yield
 
         mocker.patch("neev_voice.llm.agent.query", side_effect=mock_query)
 

@@ -7,8 +7,9 @@ import pytest
 from scipy.io import wavfile
 
 from neev_voice.config import NeevSettings, SarvamSTTMode
+from neev_voice.exceptions import NeevConfigError, NeevSTTError
 from neev_voice.stt.base import STTProvider, TranscriptionResult
-from neev_voice.stt.sarvam import SarvamSTT, get_stt_provider
+from neev_voice.stt.sarvam import SarvamSTT, _is_transient_error, get_stt_provider
 
 
 @pytest.fixture
@@ -43,6 +44,9 @@ def _make_wav(path, duration_s=1.0, sample_rate=16000):
 def _mock_sarvam_client(mocker, response_json, status_code=200):
     """Create a mocked httpx.AsyncClient that returns the given response.
 
+    The mock sets ``is_closed = False`` so the shared client is reused
+    across calls via ``_get_client()``.
+
     Args:
         mocker: pytest-mock mocker fixture.
         response_json: Dict to return from response.json().
@@ -59,8 +63,7 @@ def _mock_sarvam_client(mocker, response_json, status_code=200):
     )
 
     mock_client = mocker.AsyncMock()
-    mock_client.__aenter__ = mocker.AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = mocker.AsyncMock(return_value=False)
+    mock_client.is_closed = False
     mock_client.post = mocker.AsyncMock(return_value=mock_response)
 
     mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
@@ -76,8 +79,8 @@ class TestSarvamSTTInit:
         assert provider.settings.sarvam_api_key == "test-api-key-123"
 
     def test_init_without_key_raises(self, settings_no_key):
-        """Test SarvamSTT raises ValueError without API key."""
-        with pytest.raises(ValueError, match="Sarvam API key is required"):
+        """Test SarvamSTT raises NeevConfigError without API key."""
+        with pytest.raises(NeevConfigError, match="Sarvam API key is required"):
             SarvamSTT(settings_no_key)
 
     def test_is_stt_provider(self, settings):
@@ -120,7 +123,7 @@ class TestSarvamSTTTranscribe:
             await provider.transcribe(missing_file)
 
     async def test_transcribe_api_error(self, settings, tmp_path, mocker):
-        """Test transcribe raises RuntimeError on API error."""
+        """Test transcribe raises NeevSTTError on API error."""
         audio_file = _make_wav(tmp_path / "test.wav")
 
         mock_response = mocker.MagicMock()
@@ -128,14 +131,13 @@ class TestSarvamSTTTranscribe:
         mock_response.text = "Unauthorized"
 
         mock_client = mocker.AsyncMock()
-        mock_client.__aenter__ = mocker.AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = mocker.AsyncMock(return_value=False)
+        mock_client.is_closed = False
         mock_client.post = mocker.AsyncMock(return_value=mock_response)
 
         mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
 
         provider = SarvamSTT(settings)
-        with pytest.raises(RuntimeError, match="Sarvam STT API error"):
+        with pytest.raises(NeevSTTError, match="Sarvam STT API error"):
             await provider.transcribe(audio_file)
 
     async def test_transcribe_empty_transcript(self, settings, tmp_path, mocker):
@@ -234,8 +236,7 @@ class TestSarvamSTTChunkedTranscribe:
             return make_response(idx)
 
         mock_client = mocker.AsyncMock()
-        mock_client.__aenter__ = mocker.AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = mocker.AsyncMock(return_value=False)
+        mock_client.is_closed = False
         mock_client.post = mocker.AsyncMock(side_effect=mock_post)
 
         mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
@@ -270,8 +271,7 @@ class TestSarvamSTTChunkedTranscribe:
             return resp
 
         mock_client = mocker.AsyncMock()
-        mock_client.__aenter__ = mocker.AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = mocker.AsyncMock(return_value=False)
+        mock_client.is_closed = False
         mock_client.post = mocker.AsyncMock(side_effect=mock_post)
 
         mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
@@ -302,8 +302,7 @@ class TestSarvamSTTChunkedTranscribe:
             return resp
 
         mock_client = mocker.AsyncMock()
-        mock_client.__aenter__ = mocker.AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = mocker.AsyncMock(return_value=False)
+        mock_client.is_closed = False
         mock_client.post = mocker.AsyncMock(side_effect=mock_post)
 
         mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
@@ -343,6 +342,157 @@ class TestMergeResults:
         assert result.provider == "sarvam"
 
 
+class TestRetryBehavior:
+    """Tests for retry/backoff on transient HTTP errors."""
+
+    def test_transient_error_detection_timeout(self):
+        """Test that httpx.TimeoutException is considered transient."""
+        import httpx
+
+        assert _is_transient_error(httpx.TimeoutException("timeout")) is True
+
+    def test_transient_error_detection_connect(self):
+        """Test that httpx.ConnectError is considered transient."""
+        import httpx
+
+        assert _is_transient_error(httpx.ConnectError("connection refused")) is True
+
+    def test_transient_error_detection_server_error(self):
+        """Test that NeevSTTError with HTTP 500 is considered transient."""
+        assert _is_transient_error(NeevSTTError("Sarvam STT API error (HTTP 500): error")) is True
+
+    def test_transient_error_detection_429(self):
+        """Test that NeevSTTError with HTTP 429 is considered transient."""
+        assert _is_transient_error(NeevSTTError("Sarvam STT API error (HTTP 429): rate")) is True
+
+    def test_non_transient_error_401(self):
+        """Test that NeevSTTError with HTTP 401 is NOT considered transient."""
+        assert _is_transient_error(NeevSTTError("Sarvam STT API error (HTTP 401): unauth")) is False
+
+    def test_non_transient_error_generic(self):
+        """Test that a generic ValueError is NOT considered transient."""
+        assert _is_transient_error(ValueError("bad value")) is False
+
+    async def test_retries_on_transient_failure(self, settings, tmp_path, mocker):
+        """Test that _transcribe_single retries on transient 500 error."""
+        audio_file = _make_wav(tmp_path / "test.wav")
+
+        call_count = 0
+
+        async def mock_post(*args, **kwargs):
+            """First call returns 500, second returns 200."""
+            nonlocal call_count
+            call_count += 1
+            resp = mocker.MagicMock()
+            if call_count == 1:
+                resp.status_code = 500
+                resp.text = "Internal Server Error"
+            else:
+                resp.status_code = 200
+                resp.json.return_value = {
+                    "transcript": "success",
+                    "language_code": "hi-IN",
+                    "confidence": 0.9,
+                }
+            return resp
+
+        mock_client = mocker.AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post = mocker.AsyncMock(side_effect=mock_post)
+        mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
+
+        provider = SarvamSTT(settings)
+        result = await provider.transcribe(audio_file)
+
+        assert call_count == 2
+        assert result.text == "success"
+
+    async def test_no_retry_on_non_transient(self, settings, tmp_path, mocker):
+        """Test that _transcribe_single does NOT retry on 401."""
+        audio_file = _make_wav(tmp_path / "test.wav")
+
+        mock_response = mocker.MagicMock()
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+
+        mock_client = mocker.AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post = mocker.AsyncMock(return_value=mock_response)
+        mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
+
+        provider = SarvamSTT(settings)
+        with pytest.raises(NeevSTTError, match="HTTP 401"):
+            await provider.transcribe(audio_file)
+
+        assert mock_client.post.call_count == 1
+
+
+class TestSarvamSTTClientLifecycle:
+    """Tests for httpx.AsyncClient reuse and cleanup."""
+
+    def test_client_initially_none(self, settings):
+        """Test that _client is None before first use."""
+        provider = SarvamSTT(settings)
+        assert provider._client is None
+
+    def test_get_client_creates_client(self, settings, mocker):
+        """Test that _get_client creates an AsyncClient on first call."""
+        mock_client = mocker.MagicMock()
+        mock_client.is_closed = False
+        mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
+
+        provider = SarvamSTT(settings)
+        client = provider._get_client()
+
+        assert client is mock_client
+        assert provider._client is mock_client
+
+    def test_get_client_reuses_client(self, settings, mocker):
+        """Test that _get_client returns the same client on subsequent calls."""
+        mock_client = mocker.MagicMock()
+        mock_client.is_closed = False
+        mock_cls = mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
+
+        provider = SarvamSTT(settings)
+        client1 = provider._get_client()
+        client2 = provider._get_client()
+
+        assert client1 is client2
+        assert mock_cls.call_count == 1
+
+    def test_get_client_recreates_if_closed(self, settings, mocker):
+        """Test that _get_client creates a new client if the old one is closed."""
+        mock_client = mocker.MagicMock()
+        mock_client.is_closed = False
+        mock_cls = mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
+
+        provider = SarvamSTT(settings)
+        provider._get_client()
+        assert mock_cls.call_count == 1
+
+        mock_client.is_closed = True
+        provider._get_client()
+        assert mock_cls.call_count == 2
+
+    async def test_close_closes_client(self, settings, mocker):
+        """Test that close() calls aclose() on the client."""
+        mock_client = mocker.AsyncMock()
+        mock_client.is_closed = False
+
+        provider = SarvamSTT(settings)
+        provider._client = mock_client
+
+        await provider.close()
+
+        mock_client.aclose.assert_awaited_once()
+        assert provider._client is None
+
+    async def test_close_noop_when_no_client(self, settings):
+        """Test that close() is safe when no client exists."""
+        provider = SarvamSTT(settings)
+        await provider.close()  # Should not raise
+
+
 class TestGetSTTProvider:
     """Tests for the STT provider factory function."""
 
@@ -352,11 +502,11 @@ class TestGetSTTProvider:
         assert isinstance(provider, SarvamSTT)
 
     def test_unknown_provider_raises(self, settings):
-        """Test factory raises ValueError for unknown provider."""
-        with pytest.raises(ValueError, match="Unknown STT provider"):
+        """Test factory raises NeevConfigError for unknown provider."""
+        with pytest.raises(NeevConfigError, match="Unknown STT provider"):
             get_stt_provider("whisper", settings)
 
     def test_unknown_provider_lists_available(self, settings):
         """Test error message lists available providers."""
-        with pytest.raises(ValueError, match="sarvam"):
+        with pytest.raises(NeevConfigError, match="sarvam"):
             get_stt_provider("unknown", settings)

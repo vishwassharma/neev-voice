@@ -6,6 +6,7 @@ tools (Read, Glob, Grep) and enriches/formalizes the user's problem
 statement.  It does **not** write or modify any code.
 """
 
+import structlog
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -14,6 +15,19 @@ from claude_agent_sdk import (
 )
 
 from neev_voice.config import NeevSettings
+from neev_voice.exceptions import NeevConfigError
+
+logger = structlog.get_logger(__name__)
+
+__all__ = [
+    "ENRICHMENT_SYSTEM_PROMPT",
+    "ENRICHMENT_TEMPLATE",
+    "SCRATCH_PAD_INSTRUCTION",
+    "TASK_BREAKDOWN_INSTRUCTION",
+    "TEMPLATE_INSTRUCTION",
+    "EnrichmentAgent",
+    "build_system_prompt",
+]
 
 ENRICHMENT_SYSTEM_PROMPT = (
     "You are a code-aware analyst. Given user speech (possibly Hindi-English), "
@@ -124,10 +138,10 @@ class EnrichmentAgent:
             The enriched, formalized problem statement as markdown.
 
         Raises:
-            ValueError: If the Anthropic API key is not configured.
+            NeevConfigError: If the LLM API key is not configured.
         """
         if not self.settings.resolved_llm_api_key:
-            raise ValueError(
+            raise NeevConfigError(
                 "LLM API key is required for enrichment. "
                 "Set NEEV_ANTHROPIC_API_KEY or NEEV_OPENROUTER_API_KEY."
             )
@@ -142,6 +156,7 @@ class EnrichmentAgent:
             "findings. Keep all headings."
         )
         prompt = "\n\n".join(prompt_parts)
+        logger.info("enrichment_started", text_length=len(text), has_context=context is not None)
 
         system_prompt = build_system_prompt(self.scratch_path)
 
@@ -161,8 +176,10 @@ class EnrichmentAgent:
         texts: list[str] = []
         async for message in query(prompt=prompt, options=options):
             if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        texts.append(block.text)
+                texts.extend(
+                    block.text for block in message.content if isinstance(block, TextBlock)
+                )
 
-        return "\n".join(texts) if texts else ""
+        result = "\n".join(texts) if texts else ""
+        logger.info("enrichment_done", result_length=len(result))
+        return result

@@ -1,6 +1,7 @@
 """Tests for discussion manager orchestrator."""
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -9,7 +10,6 @@ from neev_voice.audio.recorder import AudioRecorder, AudioSegment
 from neev_voice.config import NeevSettings
 from neev_voice.discussion.manager import DiscussionManager, DiscussionResult
 from neev_voice.intent.extractor import ExtractedIntent, IntentCategory, IntentExtractor
-from neev_voice.llm.claude import ClaudeCodeClient
 from neev_voice.stt.base import STTProvider, TranscriptionResult
 from neev_voice.tts.base import TTSProvider
 
@@ -61,8 +61,8 @@ def mock_tts(mocker):
 @pytest.fixture
 def mock_intent_extractor(settings, mocker):
     """Create a mocked IntentExtractor."""
-    claude = ClaudeCodeClient(settings)
-    extractor = IntentExtractor(claude)
+    mock_agent = MagicMock()
+    extractor = IntentExtractor(mock_agent)
     extractor.extract_discussion_intent = mocker.AsyncMock(
         return_value=ExtractedIntent(
             category=IntentCategory.AGREEMENT,

@@ -36,6 +36,18 @@ repos:
       - id: python-no-eval
       - id: python-no-log-warn
 
+  # Type checking with mypy (uses local venv)
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
+        files: ^src/
+        pass_filenames: false
+        args: ["src/neev_voice/"]
+
   # Security: detect secrets accidentally committed
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0

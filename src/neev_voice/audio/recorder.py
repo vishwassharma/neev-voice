@@ -5,21 +5,26 @@ detection (RMS threshold) or push-to-talk keyboard control. Push-to-talk
 uses KeyboardMonitor to record only while spacebar is held.
 """
 
+from __future__ import annotations
+
 import asyncio
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import numpy as np
+import structlog
 from scipy.io import wavfile
 
 from neev_voice.audio.keyboard import KeyboardMonitor, RecordingState
 from neev_voice.config import NeevSettings
+from neev_voice.exceptions import RecordingCancelledError
 
+__all__ = ["AudioRecorder", "AudioSegment"]
 
-class RecordingCancelledError(Exception):
-    """Raised when the user cancels a push-to-talk recording with ESC."""
+logger = structlog.get_logger(__name__)
 
 
 @dataclass
@@ -124,8 +129,9 @@ class AudioRecorder:
         self._frames = []
         self._silence_counter = 0.0
         self._recording = True
+        logger.info("recording_started", mode="silence_detection")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         stop_event = asyncio.Event()
 
         def callback(indata: np.ndarray, frames: int, time_info: object, status: Any) -> None:
@@ -152,6 +158,7 @@ class AudioRecorder:
 
         audio_data = np.concatenate(self._frames, axis=0)
         duration = len(audio_data) / self.settings.sample_rate
+        logger.info("recording_stopped", mode="silence_detection", duration_s=round(duration, 2))
 
         return AudioSegment(
             data=audio_data,
@@ -161,8 +168,8 @@ class AudioRecorder:
 
     async def record_push_to_talk(
         self,
-        on_state_change: Optional[Callable[[RecordingState], None]] = None,
-        kb_monitor: Optional[KeyboardMonitor] = None,
+        on_state_change: Callable[[RecordingState], None] | None = None,
+        kb_monitor: KeyboardMonitor | None = None,
     ) -> AudioSegment:
         """Record audio using push-to-talk (hold SPACEBAR, press ENTER to finish).
 
@@ -186,8 +193,9 @@ class AudioRecorder:
 
         self._frames = []
         self._recording = True
+        logger.info("recording_started", mode="push_to_talk")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         done_async = asyncio.Event()
 
         monitor = kb_monitor or KeyboardMonitor(
@@ -234,6 +242,7 @@ class AudioRecorder:
             self._recording = False
 
         if monitor.cancelled_event.is_set():
+            logger.info("recording_cancelled", mode="push_to_talk")
             raise RecordingCancelledError("Recording cancelled by user")
 
         if not self._frames:
@@ -241,6 +250,7 @@ class AudioRecorder:
 
         audio_data = np.concatenate(self._frames, axis=0)
         duration = len(audio_data) / self.settings.sample_rate
+        logger.info("recording_stopped", mode="push_to_talk", duration_s=round(duration, 2))
 
         return AudioSegment(
             data=audio_data,

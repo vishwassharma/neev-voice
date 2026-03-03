@@ -6,17 +6,23 @@ and select.select() for non-blocking polling. Spacebar release is
 detected via a configurable timeout (no space chars received).
 """
 
+from __future__ import annotations
+
 import asyncio
+import contextlib
 import select
 import sys
 import termios
 import threading
 import tty
-from enum import Enum
-from typing import Callable, Optional
+from collections.abc import Callable
+from enum import StrEnum
+from typing import IO
+
+__all__ = ["KeyboardMonitor", "RecordingState"]
 
 
-class RecordingState(str, Enum):
+class RecordingState(StrEnum):
     """States for push-to-talk recording.
 
     Attributes:
@@ -52,8 +58,8 @@ class KeyboardMonitor:
     def __init__(
         self,
         release_timeout: float = 0.15,
-        on_state_change: Optional[Callable[[RecordingState], None]] = None,
-        stdin: Optional[object] = None,
+        on_state_change: Callable[[RecordingState], None] | None = None,
+        stdin: IO[str] | None = None,
     ) -> None:
         """Initialize KeyboardMonitor.
 
@@ -70,10 +76,10 @@ class KeyboardMonitor:
         self.done_event = threading.Event()
         self.cancelled_event = threading.Event()
         self.state = RecordingState.IDLE
-        self._thread: Optional[threading.Thread] = None
-        self._old_settings: Optional[list] = None
+        self._thread: threading.Thread | None = None
+        self._old_settings: list | None = None
         self._stop_flag = threading.Event()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def _set_state(self, new_state: RecordingState) -> None:
         """Update state and fire callback if provided.
@@ -98,7 +104,7 @@ class KeyboardMonitor:
         space chars), and Enter (newline/carriage return).
         """
         poll_interval = 0.05
-        last_space_time: Optional[float] = None
+        last_space_time: float | None = None
 
         import time
 
@@ -137,7 +143,7 @@ class KeyboardMonitor:
                         self._set_state(RecordingState.PAUSED)
                         last_space_time = None
 
-    def start(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+    def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         """Start the keyboard monitor background thread.
 
         Sets stdin to cbreak mode and launches a daemon thread to
@@ -177,17 +183,15 @@ class KeyboardMonitor:
             self._thread.join(timeout=1.0)
 
         if self._old_settings is not None and hasattr(self._stdin, "fileno"):
-            try:
+            with contextlib.suppress(termios.error, OSError):
                 termios.tcsetattr(
                     self._stdin.fileno(),
                     termios.TCSADRAIN,
                     self._old_settings,
                 )
-            except (termios.error, OSError):
-                pass
             self._old_settings = None
 
-    def __enter__(self) -> "KeyboardMonitor":
+    def __enter__(self) -> KeyboardMonitor:
         """Context manager entry — starts monitoring.
 
         Returns:

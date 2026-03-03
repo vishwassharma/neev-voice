@@ -5,10 +5,12 @@ chunking into sections, reading them via TTS, capturing user voice
 responses via push-to-talk, and classifying intent.
 """
 
+from __future__ import annotations
+
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
 
 from neev_voice.audio.keyboard import RecordingState
 from neev_voice.audio.recorder import AudioRecorder
@@ -16,6 +18,8 @@ from neev_voice.config import NeevSettings
 from neev_voice.intent.extractor import IntentCategory, IntentExtractor
 from neev_voice.stt.base import STTProvider
 from neev_voice.tts.base import TTSProvider
+
+__all__ = ["DiscussionManager", "DiscussionResult"]
 
 
 @dataclass
@@ -128,7 +132,7 @@ class DiscussionManager:
     async def discuss_section(
         self,
         section: str,
-        on_recording_state_change: Optional[Callable[[RecordingState], None]] = None,
+        on_recording_state_change: Callable[[RecordingState], None] | None = None,
     ) -> DiscussionResult:
         """Discuss a single document section with the user.
 
@@ -145,7 +149,10 @@ class DiscussionManager:
         """
         # Synthesize and play the section
         audio_path = await self.tts.synthesize(section)
-        TTSProvider.play_audio(audio_path)
+        try:
+            TTSProvider.play_audio(audio_path)
+        finally:
+            audio_path.unlink(missing_ok=True)
 
         # Record user response with push-to-talk
         segment = await self.recorder.record_push_to_talk(
@@ -153,8 +160,11 @@ class DiscussionManager:
         )
         wav_path = AudioRecorder.save_wav(segment)
 
-        # Transcribe
-        transcription = await self.stt.transcribe(wav_path)
+        try:
+            # Transcribe
+            transcription = await self.stt.transcribe(wav_path)
+        finally:
+            wav_path.unlink(missing_ok=True)
 
         # Extract intent in discussion context
         intent = await self.intent_extractor.extract_discussion_intent(transcription.text, section)
@@ -169,7 +179,7 @@ class DiscussionManager:
     async def run_discussion(
         self,
         path: Path,
-        on_recording_state_change: Optional[Callable[[RecordingState], None]] = None,
+        on_recording_state_change: Callable[[RecordingState], None] | None = None,
     ) -> list[DiscussionResult]:
         """Run a full document discussion.
 

@@ -7,9 +7,11 @@ output, and discussion artifacts.
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
+
+__all__ = ["ScratchPad"]
 
 
 class ScratchPad:
@@ -41,7 +43,7 @@ class ScratchPad:
         self.flow_type = flow_type
         self.base_dir = base_dir or self.DEFAULT_BASE_DIR
 
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         short_id = uuid.uuid4().hex[:8]
         self.flow_dir = self.base_dir / flow_type / f"{timestamp}_{short_id}"
         self.flow_dir.mkdir(parents=True, exist_ok=True)
@@ -120,7 +122,7 @@ class ScratchPad:
         """
         data = {
             "flow_type": self.flow_type,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "flow_dir": str(self.flow_dir),
             **kwargs,
         }

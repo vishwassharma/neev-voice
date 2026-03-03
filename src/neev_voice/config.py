@@ -9,12 +9,31 @@ unprefixed API key env vars (SARVAM_API_KEY, etc.) > JSON config.
 
 import json
 import os
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+
+from neev_voice.exceptions import NeevConfigError
+
+__all__ = [
+    "API_KEY_FIELDS",
+    "CONFIG_DIR",
+    "CONFIG_FILE",
+    "DEFAULT_CONFIG",
+    "LLMProviderType",
+    "NeevSettings",
+    "STTProviderType",
+    "SarvamSTTMode",
+    "TTSProviderType",
+    "create_default_config",
+    "ensure_config_file",
+    "load_json_config",
+    "save_json_config",
+    "update_config_value",
+]
 
 CONFIG_DIR = Path.home() / ".config" / "neev"
 CONFIG_FILE = CONFIG_DIR / "voice.json"
@@ -44,7 +63,7 @@ is checked as a fallback (e.g. ``ANTHROPIC_API_KEY`` for ``anthropic_api_key``).
 """
 
 
-class LLMProviderType(str, Enum):
+class LLMProviderType(StrEnum):
     """Supported LLM providers.
 
     Attributes:
@@ -56,13 +75,13 @@ class LLMProviderType(str, Enum):
     OPENROUTER = "openrouter"
 
 
-class STTProviderType(str, Enum):
+class STTProviderType(StrEnum):
     """Supported Speech-to-Text providers."""
 
     SARVAM = "sarvam"
 
 
-class SarvamSTTMode(str, Enum):
+class SarvamSTTMode(StrEnum):
     """Sarvam AI STT transcription modes.
 
     Attributes:
@@ -76,7 +95,7 @@ class SarvamSTTMode(str, Enum):
     FORMAL = "formal"
 
 
-class TTSProviderType(str, Enum):
+class TTSProviderType(StrEnum):
     """Supported Text-to-Speech providers."""
 
     SARVAM = "sarvam"
@@ -244,7 +263,8 @@ def load_json_config(config_file: Path = CONFIG_FILE) -> dict[str, Any]:
     if not config_file.exists():
         return {}
     try:
-        return json.loads(config_file.read_text(encoding="utf-8"))
+        data: dict[str, Any] = json.loads(config_file.read_text(encoding="utf-8"))
+        return data
     except (json.JSONDecodeError, OSError):
         return {}
 
@@ -278,7 +298,7 @@ def update_config_value(key: str, value: str, config_file: Path = CONFIG_FILE) -
 
     Raises:
         KeyError: If key is not a valid setting field.
-        ValueError: If value cannot be coerced to the expected type.
+        NeevConfigError: If value cannot be coerced to the expected type.
     """
     fields = NeevSettings.model_fields
     if key not in fields:
@@ -303,9 +323,9 @@ def update_config_value(key: str, value: str, config_file: Path = CONFIG_FILE) -
             coerced = annotation(value).value
         except ValueError:
             valid_values = [e.value for e in annotation]
-            raise ValueError(
+            raise NeevConfigError(
                 f"Invalid value '{value}' for '{key}'. Valid values: {', '.join(valid_values)}"
-            )
+            ) from None
     elif annotation is int:
         coerced = int(value)
     elif annotation is float:

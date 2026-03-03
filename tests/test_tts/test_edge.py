@@ -3,6 +3,7 @@
 import pytest
 
 from neev_voice.config import NeevSettings
+from neev_voice.exceptions import NeevConfigError
 from neev_voice.tts.base import TTSProvider
 from neev_voice.tts.edge import DEFAULT_VOICE, EdgeTTS, get_tts_provider
 
@@ -73,11 +74,11 @@ class TestGetTTSProvider:
         assert isinstance(provider, SarvamTTS)
 
     def test_unknown_provider_raises(self):
-        """Test factory raises ValueError for unknown provider."""
-        with pytest.raises(ValueError, match="Unknown TTS provider"):
+        """Test factory raises NeevConfigError for unknown provider."""
+        with pytest.raises(NeevConfigError, match="Unknown TTS provider"):
             get_tts_provider("unknown")
 
     def test_sarvam_without_settings_raises(self):
-        """Test factory raises when Sarvam requested without settings."""
-        with pytest.raises(ValueError):
+        """Test factory raises NeevConfigError when Sarvam requested without settings."""
+        with pytest.raises(NeevConfigError):
             get_tts_provider("sarvam", None)
