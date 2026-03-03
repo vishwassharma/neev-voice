@@ -4,6 +4,14 @@ Provides common fixtures including mock settings, temporary directories,
 sample audio data, and mocked provider instances.
 """
 
+import sys
+from unittest.mock import MagicMock
+
+if "sounddevice" not in sys.modules:
+    _mock_sd = MagicMock()
+    _mock_sd.CallbackFlags = MagicMock
+    sys.modules["sounddevice"] = _mock_sd
+
 import numpy as np
 import pytest
 

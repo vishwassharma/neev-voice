@@ -9,10 +9,9 @@ import asyncio
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
-import sounddevice as sd
 from scipy.io import wavfile
 
 from neev_voice.audio.keyboard import KeyboardMonitor, RecordingState
@@ -87,7 +86,7 @@ class AudioRecorder:
         indata: np.ndarray,
         frames: int,
         time_info: object,
-        status: sd.CallbackFlags,
+        status: Any,
     ) -> None:
         """Callback for sounddevice InputStream.
 
@@ -120,6 +119,8 @@ class AudioRecorder:
         Raises:
             RuntimeError: If recording fails or no audio is captured.
         """
+        import sounddevice as sd
+
         self._frames = []
         self._silence_counter = 0.0
         self._recording = True
@@ -127,9 +128,7 @@ class AudioRecorder:
         loop = asyncio.get_event_loop()
         stop_event = asyncio.Event()
 
-        def callback(
-            indata: np.ndarray, frames: int, time_info: object, status: sd.CallbackFlags
-        ) -> None:
+        def callback(indata: np.ndarray, frames: int, time_info: object, status: Any) -> None:
             """Internal callback that signals stop on silence detection."""
             self._audio_callback(indata, frames, time_info, status)
             if self._silence_counter >= self.settings.silence_duration and len(self._frames) > 1:
@@ -183,6 +182,8 @@ class AudioRecorder:
         Raises:
             RuntimeError: If no audio is captured or stdin is not a TTY.
         """
+        import sounddevice as sd
+
         self._frames = []
         self._recording = True
 
@@ -210,7 +211,7 @@ class AudioRecorder:
             indata: np.ndarray,
             frames: int,
             time_info: object,
-            status: sd.CallbackFlags,
+            status: Any,
         ) -> None:
             """Audio stream callback — only collect frames when recording."""
             if monitor.recording_event.is_set():

@@ -53,8 +53,8 @@ class TestPlayAudio:
         data = np.zeros(1600, dtype=np.int16)
         wavfile.write(str(wav_path), 16000, data)
 
-        mock_play = mocker.patch("neev_voice.tts.base.sd.play")
-        mock_wait = mocker.patch("neev_voice.tts.base.sd.wait")
+        mock_play = mocker.patch("sounddevice.play")
+        mock_wait = mocker.patch("sounddevice.wait")
 
         TTSProvider.play_audio(wav_path)
 
@@ -67,8 +67,8 @@ class TestPlayAudio:
         data = np.array([16384, -16384], dtype=np.int16)
         wavfile.write(str(wav_path), 16000, data)
 
-        mock_play = mocker.patch("neev_voice.tts.base.sd.play")
-        mocker.patch("neev_voice.tts.base.sd.wait")
+        mock_play = mocker.patch("sounddevice.play")
+        mocker.patch("sounddevice.wait")
 
         TTSProvider.play_audio(wav_path)
 

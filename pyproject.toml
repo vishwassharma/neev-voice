@@ -3,7 +3,7 @@ name = "neev-voice"
 version = "0.2.0"
 description = "A Python CLI voice agent for Hindi-English mixed speech - listens, transcribes, extracts intent, and discusses plan documents."
 readme = {text = "", content-type = "text/markdown"}
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
     "typer>=0.12.0",
@@ -46,7 +46,7 @@ asyncio_mode = "auto"
 addopts = "--cov=neev_voice --cov-report=term-missing"
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]

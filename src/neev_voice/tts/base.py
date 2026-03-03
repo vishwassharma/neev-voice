@@ -8,7 +8,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 import numpy as np
-import sounddevice as sd
 from scipy.io import wavfile
 
 
@@ -46,6 +45,8 @@ class TTSProvider(ABC):
         """
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+        import sounddevice as sd
 
         sample_rate, data = wavfile.read(str(audio_path))
 
