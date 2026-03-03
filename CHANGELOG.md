@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-03-03
+
+### Fixed
+
+- Disable FlakeHub in CI to avoid registration requirement for private repos
+- Add `libstdc++` and `zlib` to Nix `LD_LIBRARY_PATH` so numpy/scipy C extensions load on CI
+- Strip ANSI escape codes in CLI help output tests for CI compatibility
+
 ## [0.3.0] - 2026-03-03
 
 ### Added
@@ -75,6 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `detect-secrets` and `detect-private-key` pre-commit hooks
 - `no-commit-to-branch` hook protecting main branch
 
-[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/vishwassharma/neev-voice/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/vishwassharma/neev-voice/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/vishwassharma/neev-voice/releases/tag/v0.2.0
