@@ -5,20 +5,23 @@ solution, clue, agreement, disagreement, etc.) and extracts
 structured summaries using the EnrichmentAgent (Claude Agent SDK).
 """
 
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Protocol
 
 import structlog
 
 from neev_voice.exceptions import NeevLLMError
-from neev_voice.llm.agent import EnrichmentAgent
 
 logger = structlog.get_logger(__name__)
 
 __all__ = [
     "DISCUSSION_INTENT_PROMPT",
     "INTENT_EXTRACTION_PROMPT",
+    "EnrichmentAgentProtocol",
     "ExtractedIntent",
     "IntentCategory",
     "IntentExtractor",
@@ -101,21 +104,41 @@ Section being discussed:
 JSON response:"""
 
 
+class EnrichmentAgentProtocol(Protocol):
+    """Protocol for enrichment agents compatible with IntentExtractor.
+
+    Both EnrichmentAgent (v1) and EnrichmentLoopAgent (v2) satisfy
+    this protocol by providing an async ``enrich`` method.
+    """
+
+    async def enrich(self, text: str, context: str | None = None) -> str:
+        """Enrich text via LLM analysis.
+
+        Args:
+            text: Text to enrich.
+            context: Optional additional context.
+
+        Returns:
+            Enriched output as a string.
+        """
+        ...
+
+
 class IntentExtractor:
     """Extracts and classifies intent from transcribed speech.
 
-    Uses the EnrichmentAgent (Claude Agent SDK) to analyze transcribed
-    text and classify it into intent categories with structured summaries.
+    Uses an enrichment agent to analyze transcribed text and classify
+    it into intent categories with structured summaries.
 
     Attributes:
-        agent: The EnrichmentAgent instance for LLM queries.
+        agent: An enrichment agent instance for LLM queries.
     """
 
-    def __init__(self, agent: EnrichmentAgent) -> None:
-        """Initialize IntentExtractor with an EnrichmentAgent.
+    def __init__(self, agent: EnrichmentAgentProtocol) -> None:
+        """Initialize IntentExtractor with an enrichment agent.
 
         Args:
-            agent: EnrichmentAgent instance for LLM-powered analysis.
+            agent: Enrichment agent instance (v1 or v2) for LLM-powered analysis.
         """
         self.agent = agent
 

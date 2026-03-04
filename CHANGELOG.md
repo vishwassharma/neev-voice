@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-04
+
+### Added
+
+- **Transcript review gate** — interactive accept/edit/reject step between transcription and enrichment (`review.py`, `TranscriptReviewer`, `TranscriptReviewAction`)
+- **`--no-review` CLI flag** on `neev listen` to skip the transcript review step
+- **`TranscriptRejectedError`** exception for user-rejected transcripts
+- **Enrichment Agent v2 (Ralph Loop)** — iterative enrichment with self-assessment, accumulated state files, and configurable max iterations (`enrichment_loop.py`, `EnrichmentLoopAgent`)
+- **`EnrichmentVersion` enum** (v1 single-pass, v2 iterative loop) and `enrichment_version` / `enrichment_max_iterations` settings
+- **Enrichment agent factory** (`_get_enrichment_agent()`) in CLI for version-based agent selection
+- **State file persistence** — `plan.md`, `thinking.md`, `enriched_draft.md`, `memory.md`, `loop_log.jsonl` per enrichment iteration
+- **Structured response parser** for `## Plan / ## Thinking / ## Memory / ## Enrichment / ## Self-Assessment` sections
+- 497 tests with 95.6% code coverage
+
+### Changed
+
+- **Enrichment agent v2 uses `claude` CLI** subprocess (`--dangerously-skip-permissions`, `--mcp-config`, `--continue`) instead of `claude_agent_sdk` library
+- **Config table** now displays enrichment version and max iterations
+- **Default enrichment version** is v2 (iterative Ralph Loop)
+
 ## [0.3.1] - 2026-03-03
 
 ### Fixed
@@ -83,7 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `detect-secrets` and `detect-private-key` pre-commit hooks
 - `no-commit-to-branch` hook protecting main branch
 
-[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/vishwassharma/neev-voice/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/vishwassharma/neev-voice/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/vishwassharma/neev-voice/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/vishwassharma/neev-voice/releases/tag/v0.2.0

@@ -24,6 +24,7 @@ from neev_voice.audio.keyboard import RecordingState
 from neev_voice.audio.recorder import RecordingCancelledError
 from neev_voice.config import (
     CONFIG_FILE,
+    EnrichmentVersion,
     NeevSettings,
     SarvamSTTMode,
     STTProviderType,
@@ -31,11 +32,13 @@ from neev_voice.config import (
     create_default_config,
     update_config_value,
 )
-from neev_voice.exceptions import NeevConfigError, NeevError
+from neev_voice.exceptions import NeevConfigError, NeevError, TranscriptRejectedError
 from neev_voice.log import configure_logging
 
 if TYPE_CHECKING:
     from neev_voice.intent.extractor import ExtractedIntent
+    from neev_voice.llm.agent import EnrichmentAgent
+    from neev_voice.llm.enrichment_loop import EnrichmentLoopAgent
 
 logger = structlog.get_logger(__name__)
 
@@ -70,6 +73,33 @@ def _get_settings() -> NeevSettings:
     return NeevSettings()
 
 
+def _get_enrichment_agent(
+    settings: NeevSettings, scratch_path: str
+) -> EnrichmentAgent | EnrichmentLoopAgent:
+    """Create an enrichment agent based on the configured version.
+
+    Returns an EnrichmentAgent (v1) for single-pass enrichment, or
+    an EnrichmentLoopAgent (v2) for iterative Ralph Loop enrichment.
+
+    Args:
+        settings: Application settings with enrichment_version.
+        scratch_path: Path to the scratch pad flow directory.
+
+    Returns:
+        An enrichment agent instance (v1 or v2).
+    """
+    from neev_voice.llm.agent import EnrichmentAgent
+    from neev_voice.llm.enrichment_loop import EnrichmentLoopAgent
+
+    if settings.enrichment_version == EnrichmentVersion.V2:
+        return EnrichmentLoopAgent(
+            settings,
+            scratch_path,
+            max_iterations=settings.enrichment_max_iterations,
+        )
+    return EnrichmentAgent(settings, scratch_path=scratch_path)
+
+
 @app.command()
 def listen(
     stt: str | None = typer.Option(None, "--stt", help="STT provider (sarvam)"),
@@ -81,13 +111,14 @@ def listen(
         help="STT mode: translate (Hindi→English), codemix (mixed), formal (Devanagari)",
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose output"),
+    no_review: bool = typer.Option(False, "--no-review", help="Skip transcript review step"),
 ) -> None:
     """Record audio with push-to-talk, transcribe, and extract intent.
 
     Hold **SPACEBAR** to record, release to pause, press **ENTER** to
     finalize, or **ESC** to cancel. Audio is transcribed and intent is extracted.
     """
-    asyncio.run(_listen_async(stt, tts, mode, verbose))
+    asyncio.run(_listen_async(stt, tts, mode, verbose, no_review=no_review))
 
 
 def _make_recording_status(state: RecordingState) -> Panel:
@@ -114,7 +145,12 @@ def _make_recording_status(state: RecordingState) -> Panel:
 
 
 async def _listen_async(
-    stt_name: str | None, tts_name: str | None, mode: str | None, verbose: bool
+    stt_name: str | None,
+    tts_name: str | None,
+    mode: str | None,
+    verbose: bool,
+    *,
+    no_review: bool = False,
 ) -> None:
     """Async implementation of the listen command.
 
@@ -126,10 +162,10 @@ async def _listen_async(
         tts_name: Optional TTS provider name override.
         mode: Optional STT mode override (translate, codemix, formal).
         verbose: Whether to show verbose output.
+        no_review: If True, skip the transcript review gate.
     """
     from neev_voice.audio.recorder import AudioRecorder
     from neev_voice.intent.extractor import IntentExtractor
-    from neev_voice.llm.agent import EnrichmentAgent
     from neev_voice.scratch import ScratchPad
     from neev_voice.stt.sarvam import get_stt_provider
 
@@ -155,7 +191,7 @@ async def _listen_async(
 
     scratch = ScratchPad("listen")
     recorder = AudioRecorder(settings=settings)
-    agent = EnrichmentAgent(settings, scratch_path=str(scratch.flow_dir))
+    agent = _get_enrichment_agent(settings, str(scratch.flow_dir))
     extractor = IntentExtractor(agent)
 
     console.print(
@@ -198,7 +234,6 @@ async def _listen_async(
         wav_path.unlink(missing_ok=True)
 
     scratch.save_transcription(transcription.text)
-    console.print(Panel(transcription.text, title="Transcription", border_style="green"))
 
     if verbose:
         console.print(
@@ -207,15 +242,33 @@ async def _listen_async(
             f"Provider: {transcription.provider}[/dim]"
         )
 
+    # Transcript review gate
+    transcript_text = transcription.text
+    if no_review:
+        console.print(Panel(transcript_text, title="Transcription", border_style="green"))
+    else:
+        from neev_voice.review import TranscriptReviewer
+
+        reviewer = TranscriptReviewer(console=console)
+        try:
+            action, transcript_text = await reviewer.review(
+                transcript_text, scratch.transcription_path
+            )
+            if action.value == "edit":
+                scratch.save_transcription(transcript_text)
+        except TranscriptRejectedError:
+            console.print("[yellow]Transcript rejected.[/yellow]")
+            raise typer.Exit(0) from None
+
     with console.status("[bold blue]Extracting intent..."):
         try:
-            intent = await extractor.extract(transcription.text)
+            intent = await extractor.extract(transcript_text)
         except (RuntimeError, NeevError) as e:
             console.print(f"[red]Intent extraction error:[/red] {e}")
             raise typer.Exit(1) from None
 
     scratch.save_metadata(
-        transcription=transcription.text,
+        transcription=transcript_text,
         intent_category=intent.category.value,
         intent_summary=intent.summary,
         duration=segment.duration,
@@ -504,6 +557,8 @@ def config_show(ctx: typer.Context) -> None:
     table.add_row("LLM Provider", settings.llm_provider.value)
     table.add_row("LLM API Base", settings.llm_api_base or "(provider default)")
     table.add_row("STT Max Audio Duration", f"{settings.stt_max_audio_duration}s")
+    table.add_row("Enrichment Version", settings.enrichment_version.value)
+    table.add_row("Enrichment Max Iterations", str(settings.enrichment_max_iterations))
     table.add_row(
         "Sarvam API Key",
         "[green]configured[/green]" if settings.sarvam_api_key else "[red]not set[/red]",

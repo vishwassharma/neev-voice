@@ -311,7 +311,7 @@ class TestListenCommand:
         mocker.patch("neev_voice.intent.extractor.IntentExtractor", return_value=mock_extractor)
         mocker.patch("neev_voice.llm.agent.EnrichmentAgent")
 
-        await _listen_async(None, None, mode=None, verbose=True)
+        await _listen_async(None, None, mode=None, verbose=True, no_review=True)
 
         mock_scratch.save_transcription.assert_called_once_with("hello world")
         mock_scratch.save_metadata.assert_called_once()
@@ -577,7 +577,7 @@ class TestListenWithMode:
         mocker.patch("neev_voice.intent.extractor.IntentExtractor", return_value=mock_extractor)
         mocker.patch("neev_voice.llm.agent.EnrichmentAgent")
 
-        await _listen_async(None, None, mode="codemix", verbose=False)
+        await _listen_async(None, None, mode="codemix", verbose=False, no_review=True)
 
     async def test_listen_async_invalid_mode(self, mocker):
         """Test listen with invalid STT mode exits with error."""
@@ -748,6 +748,180 @@ class TestVersionModule:
         assert re.match(r"^\d+\.\d+\.\d+", __version__)
 
 
+class TestListenReviewGate:
+    """Tests for the transcript review gate in the listen command."""
+
+    @pytest.fixture
+    def _mock_listen_pipeline(self, mocker, tmp_path):
+        """Mock all listen pipeline dependencies up to the review gate.
+
+        Sets up mocked settings, STT, recorder, scratch pad, extractor,
+        and enrichment agent so tests can focus on the review gate behavior.
+        """
+        from neev_voice.audio.recorder import AudioSegment
+
+        settings = MagicMock()
+        settings.stt_provider.value = "sarvam"
+        settings.stt_mode.value = "translate"
+        settings.sarvam_api_key = "test"
+        settings.anthropic_api_key = "test-key"
+        settings.sample_rate = 16000
+        settings.silence_threshold = 0.03
+        settings.silence_duration = 1.5
+        settings.key_release_timeout = 0.15
+        settings.claude_timeout = 10
+        mocker.patch("neev_voice.cli._get_settings", return_value=settings)
+
+        from neev_voice.stt.base import TranscriptionResult
+
+        mock_stt = AsyncMock()
+        mock_stt.transcribe = AsyncMock(
+            return_value=TranscriptionResult(
+                text="hello world", language="en", confidence=0.9, provider="mock"
+            )
+        )
+        mocker.patch("neev_voice.stt.sarvam.get_stt_provider", return_value=mock_stt)
+
+        mock_segment = AudioSegment(
+            data=np.zeros((16000, 1), dtype=np.float32),
+            sample_rate=16000,
+            duration=1.0,
+        )
+        mock_recorder = MagicMock()
+        mock_recorder.record_push_to_talk = AsyncMock(return_value=mock_segment)
+        mocker.patch("neev_voice.audio.recorder.AudioRecorder", return_value=mock_recorder)
+        mocker.patch(
+            "neev_voice.audio.recorder.AudioRecorder.save_wav",
+            return_value=tmp_path / "test.wav",
+        )
+        (tmp_path / "test.wav").write_bytes(b"RIFF" + b"\x00" * 100)
+
+        mock_scratch = MagicMock()
+        mock_scratch.flow_dir = tmp_path / "scratch"
+        mock_scratch.audio_path = tmp_path / "scratch" / "audio.wav"
+        mock_scratch.transcription_path = tmp_path / "scratch" / "transcription.txt"
+        (tmp_path / "scratch").mkdir(parents=True, exist_ok=True)
+        mocker.patch("neev_voice.scratch.ScratchPad", return_value=mock_scratch)
+        self._mock_scratch = mock_scratch
+
+        mock_extractor = MagicMock()
+        mock_extractor.extract = AsyncMock(
+            return_value=ExtractedIntent(
+                category=IntentCategory.QUESTION,
+                summary="A question",
+                key_points=["test"],
+                raw_text="hello world",
+            )
+        )
+        mocker.patch("neev_voice.intent.extractor.IntentExtractor", return_value=mock_extractor)
+        self._mock_extractor = mock_extractor
+        mocker.patch("neev_voice.llm.agent.EnrichmentAgent")
+
+    @pytest.mark.usefixtures("_mock_listen_pipeline")
+    async def test_no_review_flag_skips_review(self, mocker):
+        """Test --no-review skips the transcript review gate entirely."""
+        from neev_voice.cli import _listen_async
+
+        mock_reviewer_cls = mocker.patch("neev_voice.review.TranscriptReviewer")
+
+        await _listen_async(None, None, mode=None, verbose=False, no_review=True)
+
+        mock_reviewer_cls.assert_not_called()
+        self._mock_extractor.extract.assert_called_once_with("hello world")
+
+    @pytest.mark.usefixtures("_mock_listen_pipeline")
+    async def test_review_accept_proceeds_with_original(self, mocker):
+        """Test accept action proceeds with original transcript text."""
+        from neev_voice.cli import _listen_async
+        from neev_voice.review import TranscriptReviewAction
+
+        mock_reviewer = MagicMock()
+        mock_reviewer.review = AsyncMock(
+            return_value=(TranscriptReviewAction.ACCEPT, "hello world")
+        )
+        mocker.patch("neev_voice.review.TranscriptReviewer", return_value=mock_reviewer)
+
+        await _listen_async(None, None, mode=None, verbose=False, no_review=False)
+
+        mock_reviewer.review.assert_called_once()
+        self._mock_extractor.extract.assert_called_once_with("hello world")
+
+    @pytest.mark.usefixtures("_mock_listen_pipeline")
+    async def test_review_edit_uses_edited_text(self, mocker):
+        """Test edit action uses edited text for intent extraction."""
+        from neev_voice.cli import _listen_async
+        from neev_voice.review import TranscriptReviewAction
+
+        mock_reviewer = MagicMock()
+        mock_reviewer.review = AsyncMock(
+            return_value=(TranscriptReviewAction.EDIT, "edited transcript")
+        )
+        mocker.patch("neev_voice.review.TranscriptReviewer", return_value=mock_reviewer)
+
+        await _listen_async(None, None, mode=None, verbose=False, no_review=False)
+
+        self._mock_extractor.extract.assert_called_once_with("edited transcript")
+        self._mock_scratch.save_transcription.assert_any_call("edited transcript")
+
+    @pytest.mark.usefixtures("_mock_listen_pipeline")
+    async def test_review_edit_saves_to_scratch(self, mocker):
+        """Test edit action saves edited text to scratch pad."""
+        from neev_voice.cli import _listen_async
+        from neev_voice.review import TranscriptReviewAction
+
+        mock_reviewer = MagicMock()
+        mock_reviewer.review = AsyncMock(return_value=(TranscriptReviewAction.EDIT, "updated text"))
+        mocker.patch("neev_voice.review.TranscriptReviewer", return_value=mock_reviewer)
+
+        await _listen_async(None, None, mode=None, verbose=False, no_review=False)
+
+        # save_transcription called twice: once for initial, once for edited
+        calls = self._mock_scratch.save_transcription.call_args_list
+        assert any(c.args == ("updated text",) for c in calls)
+
+    @pytest.mark.usefixtures("_mock_listen_pipeline")
+    async def test_review_reject_exits_gracefully(self, mocker):
+        """Test reject action exits with code 0."""
+        from click.exceptions import Exit
+
+        from neev_voice.cli import _listen_async
+        from neev_voice.exceptions import TranscriptRejectedError
+
+        mock_reviewer = MagicMock()
+        mock_reviewer.review = AsyncMock(
+            side_effect=TranscriptRejectedError("Transcript rejected by user.")
+        )
+        mocker.patch("neev_voice.review.TranscriptReviewer", return_value=mock_reviewer)
+
+        with pytest.raises(Exit) as exc_info:
+            await _listen_async(None, None, mode=None, verbose=False, no_review=False)
+
+        assert exc_info.value.exit_code == 0
+        self._mock_extractor.extract.assert_not_called()
+
+    @pytest.mark.usefixtures("_mock_listen_pipeline")
+    async def test_review_metadata_uses_final_text(self, mocker):
+        """Test metadata is saved with the final (possibly edited) transcript."""
+        from neev_voice.cli import _listen_async
+        from neev_voice.review import TranscriptReviewAction
+
+        mock_reviewer = MagicMock()
+        mock_reviewer.review = AsyncMock(return_value=(TranscriptReviewAction.EDIT, "final text"))
+        mocker.patch("neev_voice.review.TranscriptReviewer", return_value=mock_reviewer)
+
+        await _listen_async(None, None, mode=None, verbose=False, no_review=False)
+
+        metadata_call = self._mock_scratch.save_metadata.call_args
+        assert metadata_call.kwargs["transcription"] == "final text"
+
+    def test_listen_help_shows_no_review_option(self):
+        """Test listen --help mentions the --no-review option."""
+        result = runner.invoke(app, ["listen", "--help"])
+        assert result.exit_code == 0
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--no-review" in plain
+
+
 class TestConfigModule:
     """Tests for the config module directly."""
 
@@ -810,3 +984,78 @@ class TestConfigModule:
         settings = NeevSettings(sarvam_api_key="test")
         assert hasattr(settings, "anthropic_api_key")
         assert isinstance(settings.anthropic_api_key, str)
+
+
+class TestGetEnrichmentAgent:
+    """Tests for _get_enrichment_agent factory function."""
+
+    def test_v1_returns_enrichment_agent(self):
+        """Test v1 setting returns original EnrichmentAgent."""
+        from neev_voice.cli import _get_enrichment_agent
+        from neev_voice.config import EnrichmentVersion, NeevSettings
+        from neev_voice.llm.agent import EnrichmentAgent
+
+        settings = NeevSettings(
+            sarvam_api_key="test",
+            anthropic_api_key="test-key",
+            enrichment_version=EnrichmentVersion.V1,
+        )
+        agent = _get_enrichment_agent(settings, "/tmp/scratch")
+        assert isinstance(agent, EnrichmentAgent)
+
+    def test_v2_returns_enrichment_loop_agent(self):
+        """Test v2 setting returns EnrichmentLoopAgent."""
+        from neev_voice.cli import _get_enrichment_agent
+        from neev_voice.config import EnrichmentVersion, NeevSettings
+        from neev_voice.llm.enrichment_loop import EnrichmentLoopAgent
+
+        settings = NeevSettings(
+            sarvam_api_key="test",
+            anthropic_api_key="test-key",
+            enrichment_version=EnrichmentVersion.V2,
+        )
+        agent = _get_enrichment_agent(settings, "/tmp/scratch")
+        assert isinstance(agent, EnrichmentLoopAgent)
+
+    def test_v2_uses_max_iterations_from_settings(self):
+        """Test v2 agent receives max_iterations from settings."""
+        from neev_voice.cli import _get_enrichment_agent
+        from neev_voice.config import EnrichmentVersion, NeevSettings
+        from neev_voice.llm.enrichment_loop import EnrichmentLoopAgent
+
+        settings = NeevSettings(
+            sarvam_api_key="test",
+            anthropic_api_key="test-key",
+            enrichment_version=EnrichmentVersion.V2,
+            enrichment_max_iterations=5,
+        )
+        agent = _get_enrichment_agent(settings, "/tmp/scratch")
+        assert isinstance(agent, EnrichmentLoopAgent)
+        assert agent.max_iterations == 5
+
+    def test_default_version_is_v2(self):
+        """Test default enrichment_version returns v2 agent."""
+        from neev_voice.cli import _get_enrichment_agent
+        from neev_voice.config import NeevSettings
+        from neev_voice.llm.enrichment_loop import EnrichmentLoopAgent
+
+        settings = NeevSettings(
+            sarvam_api_key="test",
+            anthropic_api_key="test-key",
+        )
+        agent = _get_enrichment_agent(settings, "/tmp/scratch")
+        assert isinstance(agent, EnrichmentLoopAgent)
+
+
+class TestConfigEnrichmentDisplay:
+    """Tests for enrichment config display in config command."""
+
+    def test_config_shows_enrichment_version(self):
+        """Test config shows Enrichment Version row."""
+        result = runner.invoke(app, ["config"])
+        assert "Enrichment Version" in result.output
+
+    def test_config_shows_enrichment_max_iterations(self):
+        """Test config shows Enrichment Max Iterations row."""
+        result = runner.invoke(app, ["config"])
+        assert "Enrichment Max Iterations" in result.output

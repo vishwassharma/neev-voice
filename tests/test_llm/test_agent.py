@@ -22,9 +22,13 @@ def settings():
 
 
 @pytest.fixture
-def settings_no_key():
+def settings_no_key(monkeypatch):
     """Create test settings without Anthropic API key."""
-    return NeevSettings(sarvam_api_key="test", anthropic_api_key="")
+    monkeypatch.delenv("NEEV_ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("NEEV_OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    return NeevSettings(sarvam_api_key="test", anthropic_api_key="", _env_file=None)
 
 
 @pytest.fixture

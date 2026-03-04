@@ -29,12 +29,16 @@ def default_settings():
 
 
 @pytest.fixture
-def settings_no_key():
+def settings_no_key(monkeypatch):
     """Create NeevSettings without API key.
+
+    Clears relevant env vars so pydantic-settings does not override
+    the empty init kwarg.
 
     Returns:
         NeevSettings with empty API key.
     """
+    monkeypatch.delenv("NEEV_SARVAM_API_KEY", raising=False)
     return NeevSettings(sarvam_api_key="")
 
 

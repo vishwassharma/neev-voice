@@ -12,6 +12,7 @@ __all__ = [
     "NeevSTTError",
     "NeevTTSError",
     "RecordingCancelledError",
+    "TranscriptRejectedError",
 ]
 
 
@@ -50,3 +51,7 @@ class NeevLLMError(NeevError):
 
 class RecordingCancelledError(NeevError):
     """Raised when the user cancels a push-to-talk recording with ESC."""
+
+
+class TranscriptRejectedError(NeevError):
+    """Raised when the user rejects a transcript during review."""

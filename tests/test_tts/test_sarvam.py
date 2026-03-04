@@ -17,9 +17,11 @@ def settings():
 
 
 @pytest.fixture
-def settings_no_key():
+def settings_no_key(monkeypatch):
     """Create test settings without API key."""
-    return NeevSettings(sarvam_api_key="")
+    monkeypatch.delenv("NEEV_SARVAM_API_KEY", raising=False)
+    monkeypatch.delenv("SARVAM_API_KEY", raising=False)
+    return NeevSettings(sarvam_api_key="", _env_file=None)
 
 
 class TestSarvamTTSInit:

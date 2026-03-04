@@ -23,6 +23,7 @@ __all__ = [
     "CONFIG_DIR",
     "CONFIG_FILE",
     "DEFAULT_CONFIG",
+    "EnrichmentVersion",
     "LLMProviderType",
     "NeevSettings",
     "STTProviderType",
@@ -61,6 +62,18 @@ _API_KEY_FALLBACK_ENV: dict[str, str] = {
 When the NEEV_-prefixed env var is not set, the unprefixed standard name
 is checked as a fallback (e.g. ``ANTHROPIC_API_KEY`` for ``anthropic_api_key``).
 """
+
+
+class EnrichmentVersion(StrEnum):
+    """Enrichment agent version.
+
+    Attributes:
+        V1: Single-pass enrichment agent.
+        V2: Iterative Ralph Loop enrichment with accumulated state.
+    """
+
+    V1 = "v1"
+    V2 = "v2"
 
 
 class LLMProviderType(StrEnum):
@@ -125,6 +138,8 @@ class NeevSettings(BaseSettings):
         llm_provider: LLM provider selection (anthropic or openrouter).
         llm_api_base: Custom API base URL, empty uses provider default.
         openrouter_api_key: OpenRouter API key for multi-model gateway.
+        enrichment_version: Enrichment agent version (v1 single-pass, v2 iterative loop).
+        enrichment_max_iterations: Max iterations for v2 enrichment loop.
     """
 
     model_config = SettingsConfigDict(
@@ -172,6 +187,16 @@ class NeevSettings(BaseSettings):
     openrouter_api_key: str = Field(
         default="",
         description="OpenRouter API key (used when llm_provider=openrouter)",
+    )
+    enrichment_version: EnrichmentVersion = Field(
+        default=EnrichmentVersion.V2,
+        description="Enrichment agent version: v1 (single-pass) or v2 (iterative Ralph Loop)",
+    )
+    enrichment_max_iterations: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum iterations for v2 enrichment loop (1-10)",
     )
 
     @model_validator(mode="before")
@@ -353,6 +378,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stt_max_audio_duration": 30.0,
     "llm_provider": "anthropic",
     "llm_api_base": "",
+    "enrichment_version": "v2",
+    "enrichment_max_iterations": 3,
 }
 """Default config values written on first run.
 

@@ -7,6 +7,7 @@ ensure_config_file, and the JSON settings source integration.
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from neev_voice.config import (
     _API_KEY_FALLBACK_ENV,
@@ -14,6 +15,7 @@ from neev_voice.config import (
     CONFIG_DIR,
     CONFIG_FILE,
     DEFAULT_CONFIG,
+    EnrichmentVersion,
     LLMProviderType,
     NeevSettings,
     create_default_config,
@@ -249,9 +251,11 @@ class TestLLMProviderFields:
         settings = NeevSettings()
         assert settings.llm_api_base == ""
 
-    def test_openrouter_api_key_defaults_empty(self):
+    def test_openrouter_api_key_defaults_empty(self, monkeypatch):
         """Test openrouter_api_key defaults to empty string."""
-        settings = NeevSettings()
+        monkeypatch.delenv("NEEV_OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        settings = NeevSettings(_env_file=None)
         assert settings.openrouter_api_key == ""
 
     def test_llm_provider_set_to_openrouter(self):
@@ -268,6 +272,59 @@ class TestLLMProviderFields:
         """Test openrouter_api_key accepts a value."""
         settings = NeevSettings(openrouter_api_key="sk-or-test")
         assert settings.openrouter_api_key == "sk-or-test"
+
+
+class TestEnrichmentConfigFields:
+    """Tests for enrichment agent configuration fields."""
+
+    def test_enrichment_version_defaults_to_v2(self):
+        """Test enrichment_version defaults to v2."""
+        settings = NeevSettings()
+        assert settings.enrichment_version == EnrichmentVersion.V2
+
+    def test_enrichment_version_set_to_v1(self):
+        """Test enrichment_version can be set to v1."""
+        settings = NeevSettings(enrichment_version=EnrichmentVersion.V1)
+        assert settings.enrichment_version == EnrichmentVersion.V1
+
+    def test_enrichment_version_enum_values(self):
+        """Test EnrichmentVersion enum has expected values."""
+        assert EnrichmentVersion.V1.value == "v1"
+        assert EnrichmentVersion.V2.value == "v2"
+
+    def test_enrichment_version_is_str(self):
+        """Test EnrichmentVersion members are strings."""
+        assert isinstance(EnrichmentVersion.V1, str)
+
+    def test_enrichment_max_iterations_defaults_to_3(self):
+        """Test enrichment_max_iterations defaults to 3."""
+        settings = NeevSettings()
+        assert settings.enrichment_max_iterations == 3
+
+    def test_enrichment_max_iterations_custom(self):
+        """Test enrichment_max_iterations accepts custom value."""
+        settings = NeevSettings(enrichment_max_iterations=5)
+        assert settings.enrichment_max_iterations == 5
+
+    def test_enrichment_max_iterations_min_is_1(self):
+        """Test enrichment_max_iterations rejects value below 1."""
+        with pytest.raises(ValidationError):
+            NeevSettings(enrichment_max_iterations=0)
+
+    def test_enrichment_max_iterations_max_is_10(self):
+        """Test enrichment_max_iterations rejects value above 10."""
+        with pytest.raises(ValidationError):
+            NeevSettings(enrichment_max_iterations=11)
+
+    def test_default_config_includes_enrichment_version(self):
+        """Test DEFAULT_CONFIG includes enrichment_version."""
+        assert "enrichment_version" in DEFAULT_CONFIG
+        assert DEFAULT_CONFIG["enrichment_version"] == "v2"
+
+    def test_default_config_includes_enrichment_max_iterations(self):
+        """Test DEFAULT_CONFIG includes enrichment_max_iterations."""
+        assert "enrichment_max_iterations" in DEFAULT_CONFIG
+        assert DEFAULT_CONFIG["enrichment_max_iterations"] == 3
 
 
 class TestResolvedLLMProperties:
@@ -320,6 +377,8 @@ class TestDefaultConfig:
             "stt_max_audio_duration",
             "llm_provider",
             "llm_api_base",
+            "enrichment_version",
+            "enrichment_max_iterations",
         }
         assert set(DEFAULT_CONFIG.keys()) == expected_keys
 
