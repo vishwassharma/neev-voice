@@ -1076,3 +1076,168 @@ class TestConfigEnrichmentDisplay:
         """Test config shows Enrichment Max Iterations row."""
         result = runner.invoke(app, ["config"])
         assert "Enrichment Max Iterations" in result.output
+
+
+class TestEnrichCommand:
+    """Tests for the neev enrich CLI command."""
+
+    def test_enrich_help(self):
+        """Test enrich --help shows description mentioning editor."""
+        result = runner.invoke(app, ["enrich", "--help"])
+        assert result.exit_code == 0
+        assert "editor" in result.output.lower() or "EDITOR" in result.output
+
+    def test_enrich_in_main_help(self):
+        """Test enrich appears in main help output."""
+        result = runner.invoke(app, ["--help"])
+        assert "enrich" in result.output
+
+    async def test_enrich_async_success(self, mocker, tmp_path):
+        """Test the full enrich flow with mocked editor and dependencies."""
+        from neev_voice.cli import _enrich_async
+
+        settings = MagicMock()
+        settings.enrichment_version.value = "v2"
+        mocker.patch("neev_voice.cli._get_settings", return_value=settings)
+
+        mocker.patch("neev_voice.cli.click.edit", return_value="user typed this text")
+
+        mock_scratch = MagicMock()
+        mock_scratch.flow_dir = tmp_path / "scratch"
+        (tmp_path / "scratch").mkdir(parents=True, exist_ok=True)
+        mocker.patch("neev_voice.scratch.ScratchPad", return_value=mock_scratch)
+
+        mock_agent = AsyncMock()
+        mock_agent.enrich = AsyncMock(return_value="# Enrichment\n## Summary\nAnalysis")
+        mocker.patch("neev_voice.cli._get_enrichment_agent", return_value=mock_agent)
+
+        mock_classifier = MagicMock()
+        mock_classifier.classify = AsyncMock(
+            return_value=ExtractedIntent(
+                category=IntentCategory.PROBLEM_STATEMENT,
+                summary="User describes an issue",
+                key_points=["key point"],
+                raw_text="user typed this text",
+            )
+        )
+        mocker.patch("neev_voice.intent.classifier.IntentClassifier", return_value=mock_classifier)
+
+        await _enrich_async(verbose=True)
+
+        mock_scratch.save_transcription.assert_called_once_with("user typed this text")
+        mock_agent.enrich.assert_called_once_with("user typed this text")
+        mock_scratch.save_enriched.assert_called_once()
+        mock_classifier.classify.assert_called_once_with("user typed this text")
+        mock_scratch.save_metadata.assert_called_once()
+
+    async def test_enrich_async_empty_text_exits(self, mocker):
+        """Test enrich exits gracefully when editor returns None."""
+        from click.exceptions import Exit
+
+        from neev_voice.cli import _enrich_async
+
+        mocker.patch("neev_voice.cli._get_settings", return_value=MagicMock())
+        mocker.patch("neev_voice.cli.click.edit", return_value=None)
+
+        with pytest.raises(Exit) as exc_info:
+            await _enrich_async(verbose=False)
+        assert exc_info.value.exit_code == 0
+
+    async def test_enrich_async_whitespace_exits(self, mocker):
+        """Test enrich exits gracefully when editor returns only whitespace."""
+        from click.exceptions import Exit
+
+        from neev_voice.cli import _enrich_async
+
+        mocker.patch("neev_voice.cli._get_settings", return_value=MagicMock())
+        mocker.patch("neev_voice.cli.click.edit", return_value="   \n  \t  ")
+
+        with pytest.raises(Exit) as exc_info:
+            await _enrich_async(verbose=False)
+        assert exc_info.value.exit_code == 0
+
+    async def test_enrich_async_strips_whitespace(self, mocker, tmp_path):
+        """Test enrich strips leading/trailing whitespace from editor input."""
+        from neev_voice.cli import _enrich_async
+
+        mocker.patch("neev_voice.cli._get_settings", return_value=MagicMock())
+        mocker.patch("neev_voice.cli.click.edit", return_value="  hello world  \n")
+
+        mock_scratch = MagicMock()
+        mock_scratch.flow_dir = tmp_path / "scratch"
+        (tmp_path / "scratch").mkdir(parents=True, exist_ok=True)
+        mocker.patch("neev_voice.scratch.ScratchPad", return_value=mock_scratch)
+
+        mock_agent = AsyncMock()
+        mock_agent.enrich = AsyncMock(return_value="enriched")
+        mocker.patch("neev_voice.cli._get_enrichment_agent", return_value=mock_agent)
+
+        mock_classifier = MagicMock()
+        mock_classifier.classify = AsyncMock(
+            return_value=ExtractedIntent(
+                category=IntentCategory.QUESTION,
+                summary="Q",
+                key_points=[],
+                raw_text="hello world",
+            )
+        )
+        mocker.patch("neev_voice.intent.classifier.IntentClassifier", return_value=mock_classifier)
+
+        await _enrich_async(verbose=False)
+
+        mock_scratch.save_transcription.assert_called_once_with("hello world")
+        mock_agent.enrich.assert_called_once_with("hello world")
+
+    async def test_enrich_async_enrichment_error(self, mocker, tmp_path):
+        """Test enrich exits with error when enrichment fails."""
+        from click.exceptions import Exit
+
+        from neev_voice.cli import _enrich_async
+
+        mocker.patch("neev_voice.cli._get_settings", return_value=MagicMock())
+        mocker.patch("neev_voice.cli.click.edit", return_value="some text")
+
+        mock_scratch = MagicMock()
+        mock_scratch.flow_dir = tmp_path / "scratch"
+        (tmp_path / "scratch").mkdir(parents=True, exist_ok=True)
+        mocker.patch("neev_voice.scratch.ScratchPad", return_value=mock_scratch)
+
+        mock_agent = AsyncMock()
+        mock_agent.enrich = AsyncMock(side_effect=RuntimeError("boom"))
+        mocker.patch("neev_voice.cli._get_enrichment_agent", return_value=mock_agent)
+
+        with pytest.raises(Exit) as exc_info:
+            await _enrich_async(verbose=False)
+        assert exc_info.value.exit_code == 1
+
+    async def test_enrich_uses_enrich_flow_type(self, mocker, tmp_path):
+        """Test enrich creates ScratchPad with 'enrich' flow type."""
+        from neev_voice.cli import _enrich_async
+
+        mocker.patch("neev_voice.cli._get_settings", return_value=MagicMock())
+        mocker.patch("neev_voice.cli.click.edit", return_value="text")
+
+        mock_scratch_cls = mocker.patch("neev_voice.scratch.ScratchPad")
+        mock_scratch = MagicMock()
+        mock_scratch.flow_dir = tmp_path / "scratch"
+        (tmp_path / "scratch").mkdir(parents=True, exist_ok=True)
+        mock_scratch_cls.return_value = mock_scratch
+
+        mock_agent = AsyncMock()
+        mock_agent.enrich = AsyncMock(return_value="enriched")
+        mocker.patch("neev_voice.cli._get_enrichment_agent", return_value=mock_agent)
+
+        mock_classifier = MagicMock()
+        mock_classifier.classify = AsyncMock(
+            return_value=ExtractedIntent(
+                category=IntentCategory.QUESTION,
+                summary="Q",
+                key_points=[],
+                raw_text="text",
+            )
+        )
+        mocker.patch("neev_voice.intent.classifier.IntentClassifier", return_value=mock_classifier)
+
+        await _enrich_async(verbose=False)
+
+        mock_scratch_cls.assert_called_once_with("enrich")
