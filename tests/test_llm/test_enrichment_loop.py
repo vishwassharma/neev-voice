@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from neev_voice.config import NeevSettings
-from neev_voice.exceptions import NeevConfigError
 from neev_voice.llm.enrichment_loop import (
     LOOP_RESPONSE_FORMAT,
     LOOP_SYSTEM_PROMPT,
@@ -539,11 +538,25 @@ class TestEnrichmentLoopAgent:
         agent = EnrichmentLoopAgent(settings, str(tmp_path), max_iterations=5)
         assert agent.max_iterations == 5
 
-    async def test_enrich_missing_api_key_raises(self, settings_no_key, tmp_path):
-        """Test enrich raises NeevConfigError when API key is not set."""
-        agent = EnrichmentLoopAgent(settings_no_key, str(tmp_path))
-        with pytest.raises(NeevConfigError, match="LLM API key is required"):
-            await agent.enrich("some text")
+    async def test_enrich_works_without_api_key(self, settings_no_key, tmp_path, mocker):
+        """Test enrich works without API key (claude CLI manages its own auth)."""
+        agent = EnrichmentLoopAgent(settings_no_key, str(tmp_path), max_iterations=1)
+
+        response_text = (
+            "## Enrichment\nOutput\n\n## Self-Assessment\nQuality: 9/10\nGaps: none\nComplete: yes"
+        )
+
+        mock_subprocess = mocker.patch(
+            "neev_voice.llm.enrichment_loop.asyncio.create_subprocess_exec",
+            return_value=_make_mock_process(response_text),
+        )
+
+        result = await agent.enrich("some text")
+        assert "Output" in result
+
+        # API key should NOT be in env when not configured
+        call_kwargs = mock_subprocess.call_args.kwargs
+        assert "ANTHROPIC_API_KEY" not in call_kwargs["env"]
 
     async def test_enrich_runs_iterations(self, settings, tmp_path, mocker):
         """Test enrich runs expected number of iterations via claude CLI."""
@@ -714,8 +727,8 @@ class TestEnrichmentLoopAgent:
         second_call_args = mock_subprocess.call_args_list[1].args
         assert "--continue" in second_call_args
 
-    async def test_enrich_sets_api_key_in_env(self, settings, tmp_path, mocker):
-        """Test enrich passes ANTHROPIC_API_KEY in subprocess environment."""
+    async def test_enrich_sets_api_key_in_env_when_available(self, settings, tmp_path, mocker):
+        """Test enrich passes ANTHROPIC_API_KEY when configured."""
         agent = EnrichmentLoopAgent(settings, str(tmp_path), max_iterations=1)
 
         response_text = (

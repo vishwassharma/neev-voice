@@ -16,7 +16,7 @@ import os
 import structlog
 
 from neev_voice.config import NeevSettings
-from neev_voice.exceptions import NeevConfigError, NeevLLMError
+from neev_voice.exceptions import NeevLLMError
 from neev_voice.intent.extractor import (
     DISCUSSION_INTENT_PROMPT,
     INTENT_EXTRACTION_PROMPT,
@@ -37,15 +37,14 @@ class IntentClassifier:
     intent classification and returns structured ``ExtractedIntent``.
 
     Attributes:
-        settings: Application settings with API keys and model config.
+        settings: Application settings with model config.
     """
 
     def __init__(self, settings: NeevSettings) -> None:
         """Initialize IntentClassifier with application settings.
 
         Args:
-            settings: Application settings with anthropic_api_key
-                and claude_model configuration.
+            settings: Application settings with claude_model configuration.
         """
         self.settings = settings
 
@@ -62,15 +61,8 @@ class IntentClassifier:
             ExtractedIntent with category, summary, and key points.
 
         Raises:
-            NeevConfigError: If the LLM API key is not configured.
             NeevLLMError: If the CLI call fails or response parsing fails.
         """
-        if not self.settings.resolved_llm_api_key:
-            raise NeevConfigError(
-                "LLM API key is required for intent classification. "
-                "Set NEEV_ANTHROPIC_API_KEY or NEEV_OPENROUTER_API_KEY."
-            )
-
         prompt = INTENT_EXTRACTION_PROMPT.format(text=text)
         response = await self._run_claude(prompt)
         return self._parse_response(response, text)
@@ -89,15 +81,8 @@ class IntentClassifier:
             ExtractedIntent with discussion-specific classification.
 
         Raises:
-            NeevConfigError: If the LLM API key is not configured.
             NeevLLMError: If the CLI call fails or response parsing fails.
         """
-        if not self.settings.resolved_llm_api_key:
-            raise NeevConfigError(
-                "LLM API key is required for intent classification. "
-                "Set NEEV_ANTHROPIC_API_KEY or NEEV_OPENROUTER_API_KEY."
-            )
-
         prompt = DISCUSSION_INTENT_PROMPT.format(text=text, section=section)
         response = await self._run_claude(prompt)
         return self._parse_response(response, text)
@@ -118,7 +103,9 @@ class IntentClassifier:
             NeevLLMError: If the CLI returns non-zero exit code with no output.
         """
         env = dict(os.environ)
-        env["ANTHROPIC_API_KEY"] = self.settings.resolved_llm_api_key
+        api_key = self.settings.resolved_llm_api_key
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
         if self.settings.resolved_llm_api_base:
             env["ANTHROPIC_BASE_URL"] = self.settings.resolved_llm_api_base
 

@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from neev_voice.config import NeevSettings
-from neev_voice.exceptions import NeevConfigError, NeevLLMError
+from neev_voice.exceptions import NeevLLMError
 from neev_voice.intent.classifier import IntentClassifier
 from neev_voice.intent.extractor import IntentCategory
 
@@ -74,11 +74,28 @@ class TestIntentClassifierClassify:
             _env_file=None,
         )
 
-    async def test_classify_missing_api_key_raises(self, settings_no_key):
-        """Test classify raises NeevConfigError when API key is not set."""
+    async def test_classify_works_without_api_key(self, settings_no_key, mocker):
+        """Test classify works without API key (claude CLI manages its own auth)."""
         classifier = IntentClassifier(settings_no_key)
-        with pytest.raises(NeevConfigError, match="LLM API key is required"):
-            await classifier.classify("some text")
+        response = json.dumps(
+            {
+                "category": "question",
+                "summary": "A question",
+                "key_points": [],
+            }
+        )
+
+        mock_subprocess = mocker.patch(
+            "neev_voice.intent.classifier.asyncio.create_subprocess_exec",
+            return_value=_make_mock_process(response),
+        )
+
+        result = await classifier.classify("some text")
+        assert result.category == IntentCategory.QUESTION
+
+        # API key should NOT be in env when not configured
+        call_kwargs = mock_subprocess.call_args.kwargs
+        assert "ANTHROPIC_API_KEY" not in call_kwargs["env"]
 
     async def test_classify_returns_extracted_intent(self, settings, mocker):
         """Test classify returns a valid ExtractedIntent."""
@@ -149,8 +166,8 @@ class TestIntentClassifierClassify:
         with pytest.raises(NeevLLMError, match="Failed to parse"):
             await classifier.classify("test")
 
-    async def test_classify_sets_api_key_in_env(self, settings, mocker):
-        """Test classify passes ANTHROPIC_API_KEY in subprocess environment."""
+    async def test_classify_sets_api_key_in_env_when_available(self, settings, mocker):
+        """Test classify passes ANTHROPIC_API_KEY when configured."""
         classifier = IntentClassifier(settings)
         response = json.dumps(
             {

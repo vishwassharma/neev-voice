@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-04
+
+### Changed
+
+- **Remove API key requirement from `neev listen`** — the `claude` CLI manages its own auth, so `NEEV_ANTHROPIC_API_KEY` and `NEEV_OPENROUTER_API_KEY` are no longer required for listen/enrichment/classification
+- **IntentClassifier** and **EnrichmentLoopAgent** now pass API keys to `claude` CLI only when configured (optional, not required)
+- `neev discuss` still requires API keys (uses EnrichmentAgent v1 with `claude_agent_sdk`)
+- 512 tests with 95.5% code coverage
+
 ## [0.5.0] - 2026-03-04
 
 ### Added

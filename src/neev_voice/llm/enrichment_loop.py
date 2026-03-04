@@ -473,17 +473,7 @@ class EnrichmentLoopAgent:
         Returns:
             The final enriched output as markdown.
 
-        Raises:
-            NeevConfigError: If the LLM API key is not configured.
         """
-        from neev_voice.exceptions import NeevConfigError
-
-        if not self.settings.resolved_llm_api_key:
-            raise NeevConfigError(
-                "LLM API key is required for enrichment. "
-                "Set NEEV_ANTHROPIC_API_KEY or NEEV_OPENROUTER_API_KEY."
-            )
-
         flow_dir = Path(self.scratch_path)
         state = LoopState()
 
@@ -504,7 +494,9 @@ class EnrichmentLoopAgent:
             full_prompt = f"{LOOP_SYSTEM_PROMPT}\n\n{prompt}"
 
             env = dict(os.environ)
-            env["ANTHROPIC_API_KEY"] = self.settings.resolved_llm_api_key
+            api_key = self.settings.resolved_llm_api_key
+            if api_key:
+                env["ANTHROPIC_API_KEY"] = api_key
             if self.settings.resolved_llm_api_base:
                 env["ANTHROPIC_BASE_URL"] = self.settings.resolved_llm_api_base
 
