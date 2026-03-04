@@ -66,7 +66,30 @@ You MUST structure your response using these exact headings:
 [Key discoveries to remember for the next iteration]
 
 ## Enrichment
-[The actual enriched output — formal, specific, structured]
+
+Output your enrichment as structured markdown text (NOT JSON). Use these subsections:
+
+### Summary
+[1-2 sentence formal summary of the user's problem statement]
+
+### Key Points
+- [Bullet point 1]
+- [Bullet point 2]
+
+### Context Analysis
+[Describe relevant codebase context discovered via Read/Glob/Grep]
+
+### Relevant Code References
+| File | Symbol | Relevance |
+|------|--------|-----------|
+
+### Suggested Investigation Areas
+- [Area 1]
+- [Area 2]
+
+### Atomic Task Breakdown
+1. [Task 1]
+2. [Task 2]
 
 ## Self-Assessment
 Quality: N/10

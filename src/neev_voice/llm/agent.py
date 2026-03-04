@@ -42,11 +42,15 @@ ENRICHMENT_TEMPLATE = """\
 ## Original Statement
 > {original_text}
 
+## Summary
+<!-- 1-2 sentence formal summary of the user's problem statement -->
+
+## Key Points
+<!-- Bullet list of key points extracted from the statement -->
+-
+
 ## Context Analysis
 <!-- Describe relevant codebase context discovered via Read/Glob/Grep -->
-
-## Formalized Problem Statement
-<!-- Rewrite the original speech as a precise, actionable problem statement -->
 
 ## Relevant Code References
 <!-- List actual files/functions/classes that relate to this problem -->

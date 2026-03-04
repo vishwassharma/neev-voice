@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-04
+
+### Added
+
+- **IntentClassifier** — lightweight intent classification via `claude` CLI subprocess, separate from enrichment (`intent/classifier.py`)
+- 13 tests for IntentClassifier covering init, classify, discussion, error handling
+
+### Changed
+
+- **Separated enrichment from intent classification** in `neev listen` — enrichment agent produces structured markdown, IntentClassifier handles lightweight JSON classification
+- **Enrichment output format** updated to structured markdown (not JSON) with subsections: Summary, Key Points, Context Analysis, Relevant Code References, Suggested Investigation Areas, Atomic Task Breakdown
+- **`_listen_async()` flow** now calls `agent.enrich()` directly → saves to scratch → displays enrichment panel → then `classifier.classify()` for intent
+- **`intent/__init__.py`** now exports `IntentClassifier`
+- 512 tests with 95.4% code coverage
+
 ## [0.4.0] - 2026-03-04
 
 ### Added

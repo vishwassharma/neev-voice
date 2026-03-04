@@ -404,6 +404,20 @@ class TestLoopResponseFormat:
         """Test response format includes quality, gaps, complete fields."""
         assert "Quality:" in LOOP_RESPONSE_FORMAT
         assert "Gaps:" in LOOP_RESPONSE_FORMAT
+
+    def test_enrichment_section_specifies_markdown(self):
+        """Test enrichment section requests structured markdown, not JSON."""
+        assert "NOT JSON" in LOOP_RESPONSE_FORMAT
+        assert "structured markdown" in LOOP_RESPONSE_FORMAT
+
+    def test_enrichment_section_has_subsections(self):
+        """Test enrichment section includes all required subsections."""
+        assert "### Summary" in LOOP_RESPONSE_FORMAT
+        assert "### Key Points" in LOOP_RESPONSE_FORMAT
+        assert "### Context Analysis" in LOOP_RESPONSE_FORMAT
+        assert "### Relevant Code References" in LOOP_RESPONSE_FORMAT
+        assert "### Suggested Investigation Areas" in LOOP_RESPONSE_FORMAT
+        assert "### Atomic Task Breakdown" in LOOP_RESPONSE_FORMAT
         assert "Complete:" in LOOP_RESPONSE_FORMAT
 
 
