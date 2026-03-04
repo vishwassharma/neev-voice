@@ -23,13 +23,47 @@ A Python CLI voice agent for Hindi-English mixed speech. Listens to user voice, 
 
 ## Installation
 
+### As a CLI tool (recommended)
+
+Install globally so the `neev` command is available everywhere:
+
+```bash
+# From GitHub (latest release)
+uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.3.1
+
+# From GitHub (latest main)
+uv tool install git+https://github.com/vishwassharma/neev-voice.git@main
+
+# From a local checkout
+uv tool install /path/to/neev-voice
+```
+
+To update when the remote repo changes:
+
+```bash
+# If installed from a branch (e.g. @main)
+uv tool upgrade neev-voice
+
+# If pinned to a tag, reinstall with the new tag
+uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.4.0 --force
+```
+
+### As a project dependency
+
+```bash
+# Add to another project
+uv add git+https://github.com/vishwassharma/neev-voice.git@v0.3.1
+```
+
+### For development
+
 ```bash
 # Clone the repository
 git clone https://github.com/vishwassharma/neev-voice.git
 cd neev-voice
 
 # Install dependencies
-uv sync
+uv sync --group dev
 
 # Install pre-commit hooks
 pre-commit install
@@ -124,12 +158,11 @@ src/neev_voice/
         sarvam.py        # Sarvam Bulbul TTS
     llm/
         agent.py         # EnrichmentAgent (Claude Agent SDK)
-        claude.py        # legacy Claude CLI wrapper
     intent/
         extractor.py     # intent classification
     discussion/
         manager.py       # document discussion orchestrator
-tests/                   # mirrors src/ structure, 356 tests
+tests/                   # mirrors src/ structure, 396 tests
 scripts/
     generate_release_notes.py  # changelog/git-based release notes
 ```
@@ -154,8 +187,8 @@ pre-commit run --all-files
 
 1. Update version in `pyproject.toml`
 2. Add entry to `CHANGELOG.md`
-3. Commit and tag: `git tag v0.2.0`
-4. Push tag: `git push origin v0.2.0`
+3. Commit and tag: `git tag v0.x.x`
+4. Push tag: `git push origin v0.x.x`
 5. GitHub Actions builds, verifies version+changelog, and creates the release
 
 ## License
