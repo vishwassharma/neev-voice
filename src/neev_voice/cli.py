@@ -1,6 +1,6 @@
 """CLI entry point for Neev Voice.
 
-Provides commands for voice listening, document discussion,
+Provides commands for voice listening, text enrichment, document discussion,
 configuration display, and provider listing using Typer and Rich.
 Uses push-to-talk (hold SPACEBAR, release to pause, ENTER to send).
 """
@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import click
 import structlog
 import typer
 from rich.console import Console
@@ -321,6 +322,79 @@ def _display_intent(intent: ExtractedIntent) -> None:
             border_style=color,
         )
     )
+
+
+@app.command()
+def enrich(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose output"),
+) -> None:
+    """Enter text in your default editor for enrichment and intent extraction.
+
+    Opens **$EDITOR** (or system default) so you can type or paste text.
+    The text is then enriched and classified, identical to the post-transcription
+    flow in ``neev listen``.
+    """
+    asyncio.run(_enrich_async(verbose))
+
+
+async def _enrich_async(verbose: bool) -> None:
+    """Async implementation of the enrich command.
+
+    Opens the user's default editor, reads the entered text, enriches it
+    via the configured enrichment agent, and classifies intent.
+
+    Args:
+        verbose: Whether to show verbose output.
+    """
+    from neev_voice.intent.classifier import IntentClassifier
+    from neev_voice.scratch import ScratchPad
+
+    configure_logging(json_logs=not verbose)
+    settings = _get_settings()
+    logger.info("enrich_command_started")
+
+    text = click.edit(text="", extension=".txt")
+    if not text or not text.strip():
+        console.print("[yellow]No text entered. Aborting.[/yellow]")
+        raise typer.Exit(0)
+
+    text = text.strip()
+
+    scratch = ScratchPad("enrich")
+    agent = _get_enrichment_agent(settings, str(scratch.flow_dir))
+    classifier = IntentClassifier(settings)
+
+    scratch.save_transcription(text)
+    console.print(Panel(text, title="Input Text", border_style="green"))
+
+    with console.status("[bold blue]Enriching..."):
+        try:
+            enriched = await agent.enrich(text)
+        except (RuntimeError, NeevError) as e:
+            console.print(f"[red]Enrichment error:[/red] {e}")
+            raise typer.Exit(1) from None
+
+    scratch.save_enriched(enriched)
+    if enriched:
+        console.print(Panel(enriched, title="Enrichment", border_style="blue"))
+
+    with console.status("[bold blue]Classifying intent..."):
+        try:
+            intent = await classifier.classify(text)
+        except (RuntimeError, NeevError) as e:
+            console.print(f"[red]Intent classification error:[/red] {e}")
+            raise typer.Exit(1) from None
+
+    scratch.save_metadata(
+        transcription=text,
+        intent_category=intent.category.value,
+        intent_summary=intent.summary,
+    )
+
+    _display_intent(intent)
+
+    if verbose:
+        console.print(f"[dim]Artifacts saved to: {scratch.flow_dir}[/dim]")
 
 
 @app.command()

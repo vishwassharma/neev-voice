@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-03-04
+
+### Added
+
+- **`neev enrich` command** — opens `$EDITOR` for text input, then runs enrichment and intent classification (same post-transcription flow as `neev listen`, without audio/STT)
+- 8 tests for the enrich command covering editor input, empty/whitespace handling, error cases, and scratch pad integration
+- 520 tests with 95.3% code coverage
+
 ## [0.6.0] - 2026-03-04
 
 ### Changed
