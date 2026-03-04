@@ -165,7 +165,7 @@ async def _listen_async(
         no_review: If True, skip the transcript review gate.
     """
     from neev_voice.audio.recorder import AudioRecorder
-    from neev_voice.intent.extractor import IntentExtractor
+    from neev_voice.intent.classifier import IntentClassifier
     from neev_voice.scratch import ScratchPad
     from neev_voice.stt.sarvam import get_stt_provider
 
@@ -192,7 +192,7 @@ async def _listen_async(
     scratch = ScratchPad("listen")
     recorder = AudioRecorder(settings=settings)
     agent = _get_enrichment_agent(settings, str(scratch.flow_dir))
-    extractor = IntentExtractor(agent)
+    classifier = IntentClassifier(settings)
 
     console.print(
         "[bold cyan]Push-to-Talk:[/bold cyan] "
@@ -260,11 +260,22 @@ async def _listen_async(
             console.print("[yellow]Transcript rejected.[/yellow]")
             raise typer.Exit(0) from None
 
-    with console.status("[bold blue]Extracting intent..."):
+    with console.status("[bold blue]Enriching..."):
         try:
-            intent = await extractor.extract(transcript_text)
+            enriched = await agent.enrich(transcript_text)
         except (RuntimeError, NeevError) as e:
-            console.print(f"[red]Intent extraction error:[/red] {e}")
+            console.print(f"[red]Enrichment error:[/red] {e}")
+            raise typer.Exit(1) from None
+
+    scratch.save_enriched(enriched)
+    if enriched:
+        console.print(Panel(enriched, title="Enrichment", border_style="blue"))
+
+    with console.status("[bold blue]Classifying intent..."):
+        try:
+            intent = await classifier.classify(transcript_text)
+        except (RuntimeError, NeevError) as e:
+            console.print(f"[red]Intent classification error:[/red] {e}")
             raise typer.Exit(1) from None
 
     scratch.save_metadata(

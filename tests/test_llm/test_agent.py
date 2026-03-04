@@ -44,8 +44,9 @@ class TestEnrichmentTemplate:
         """Test template contains all required markdown headings."""
         assert "# Enrichment Report" in ENRICHMENT_TEMPLATE
         assert "## Original Statement" in ENRICHMENT_TEMPLATE
+        assert "## Summary" in ENRICHMENT_TEMPLATE
+        assert "## Key Points" in ENRICHMENT_TEMPLATE
         assert "## Context Analysis" in ENRICHMENT_TEMPLATE
-        assert "## Formalized Problem Statement" in ENRICHMENT_TEMPLATE
         assert "## Relevant Code References" in ENRICHMENT_TEMPLATE
         assert "## Suggested Investigation Areas" in ENRICHMENT_TEMPLATE
         assert "## Atomic Task Breakdown" in ENRICHMENT_TEMPLATE

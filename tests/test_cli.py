@@ -299,8 +299,12 @@ class TestListenCommand:
         (tmp_path / "scratch").mkdir(parents=True, exist_ok=True)
         mocker.patch("neev_voice.scratch.ScratchPad", return_value=mock_scratch)
 
-        mock_extractor = MagicMock()
-        mock_extractor.extract = AsyncMock(
+        mock_agent = AsyncMock()
+        mock_agent.enrich = AsyncMock(return_value="# Enrichment Report\n## Summary\nTest")
+        mocker.patch("neev_voice.cli._get_enrichment_agent", return_value=mock_agent)
+
+        mock_classifier = MagicMock()
+        mock_classifier.classify = AsyncMock(
             return_value=ExtractedIntent(
                 category=IntentCategory.QUESTION,
                 summary="A question",
@@ -308,12 +312,14 @@ class TestListenCommand:
                 raw_text="hello world",
             )
         )
-        mocker.patch("neev_voice.intent.extractor.IntentExtractor", return_value=mock_extractor)
-        mocker.patch("neev_voice.llm.agent.EnrichmentAgent")
+        mocker.patch("neev_voice.intent.classifier.IntentClassifier", return_value=mock_classifier)
 
         await _listen_async(None, None, mode=None, verbose=True, no_review=True)
 
         mock_scratch.save_transcription.assert_called_once_with("hello world")
+        mock_agent.enrich.assert_called_once_with("hello world")
+        mock_scratch.save_enriched.assert_called_once()
+        mock_classifier.classify.assert_called_once_with("hello world")
         mock_scratch.save_metadata.assert_called_once()
 
     async def test_listen_async_invalid_provider(self, mocker):
@@ -361,8 +367,8 @@ class TestListenCancellation:
             side_effect=RecordingCancelledError("Recording cancelled by user")
         )
         mocker.patch("neev_voice.audio.recorder.AudioRecorder", return_value=mock_recorder)
-        mocker.patch("neev_voice.llm.agent.EnrichmentAgent")
-        mocker.patch("neev_voice.intent.extractor.IntentExtractor")
+        mocker.patch("neev_voice.cli._get_enrichment_agent")
+        mocker.patch("neev_voice.intent.classifier.IntentClassifier")
 
         from click.exceptions import Exit
 
@@ -565,8 +571,12 @@ class TestListenWithMode:
         (tmp_path / "scratch").mkdir(parents=True, exist_ok=True)
         mocker.patch("neev_voice.scratch.ScratchPad", return_value=mock_scratch)
 
-        mock_extractor = MagicMock()
-        mock_extractor.extract = AsyncMock(
+        mock_agent = AsyncMock()
+        mock_agent.enrich = AsyncMock(return_value="enriched output")
+        mocker.patch("neev_voice.cli._get_enrichment_agent", return_value=mock_agent)
+
+        mock_classifier = MagicMock()
+        mock_classifier.classify = AsyncMock(
             return_value=ExtractedIntent(
                 category=IntentCategory.QUESTION,
                 summary="Q",
@@ -574,8 +584,7 @@ class TestListenWithMode:
                 raw_text="hello",
             )
         )
-        mocker.patch("neev_voice.intent.extractor.IntentExtractor", return_value=mock_extractor)
-        mocker.patch("neev_voice.llm.agent.EnrichmentAgent")
+        mocker.patch("neev_voice.intent.classifier.IntentClassifier", return_value=mock_classifier)
 
         await _listen_async(None, None, mode="codemix", verbose=False, no_review=True)
 
@@ -755,8 +764,8 @@ class TestListenReviewGate:
     def _mock_listen_pipeline(self, mocker, tmp_path):
         """Mock all listen pipeline dependencies up to the review gate.
 
-        Sets up mocked settings, STT, recorder, scratch pad, extractor,
-        and enrichment agent so tests can focus on the review gate behavior.
+        Sets up mocked settings, STT, recorder, scratch pad, enrichment
+        agent, and intent classifier so tests can focus on the review gate behavior.
         """
         from neev_voice.audio.recorder import AudioSegment
 
@@ -804,8 +813,13 @@ class TestListenReviewGate:
         mocker.patch("neev_voice.scratch.ScratchPad", return_value=mock_scratch)
         self._mock_scratch = mock_scratch
 
-        mock_extractor = MagicMock()
-        mock_extractor.extract = AsyncMock(
+        mock_agent = AsyncMock()
+        mock_agent.enrich = AsyncMock(return_value="# Enrichment\nTest enrichment")
+        mocker.patch("neev_voice.cli._get_enrichment_agent", return_value=mock_agent)
+        self._mock_agent = mock_agent
+
+        mock_classifier = MagicMock()
+        mock_classifier.classify = AsyncMock(
             return_value=ExtractedIntent(
                 category=IntentCategory.QUESTION,
                 summary="A question",
@@ -813,9 +827,8 @@ class TestListenReviewGate:
                 raw_text="hello world",
             )
         )
-        mocker.patch("neev_voice.intent.extractor.IntentExtractor", return_value=mock_extractor)
-        self._mock_extractor = mock_extractor
-        mocker.patch("neev_voice.llm.agent.EnrichmentAgent")
+        mocker.patch("neev_voice.intent.classifier.IntentClassifier", return_value=mock_classifier)
+        self._mock_classifier = mock_classifier
 
     @pytest.mark.usefixtures("_mock_listen_pipeline")
     async def test_no_review_flag_skips_review(self, mocker):
@@ -827,7 +840,8 @@ class TestListenReviewGate:
         await _listen_async(None, None, mode=None, verbose=False, no_review=True)
 
         mock_reviewer_cls.assert_not_called()
-        self._mock_extractor.extract.assert_called_once_with("hello world")
+        self._mock_agent.enrich.assert_called_once_with("hello world")
+        self._mock_classifier.classify.assert_called_once_with("hello world")
 
     @pytest.mark.usefixtures("_mock_listen_pipeline")
     async def test_review_accept_proceeds_with_original(self, mocker):
@@ -844,11 +858,12 @@ class TestListenReviewGate:
         await _listen_async(None, None, mode=None, verbose=False, no_review=False)
 
         mock_reviewer.review.assert_called_once()
-        self._mock_extractor.extract.assert_called_once_with("hello world")
+        self._mock_agent.enrich.assert_called_once_with("hello world")
+        self._mock_classifier.classify.assert_called_once_with("hello world")
 
     @pytest.mark.usefixtures("_mock_listen_pipeline")
     async def test_review_edit_uses_edited_text(self, mocker):
-        """Test edit action uses edited text for intent extraction."""
+        """Test edit action uses edited text for enrichment and classification."""
         from neev_voice.cli import _listen_async
         from neev_voice.review import TranscriptReviewAction
 
@@ -860,7 +875,8 @@ class TestListenReviewGate:
 
         await _listen_async(None, None, mode=None, verbose=False, no_review=False)
 
-        self._mock_extractor.extract.assert_called_once_with("edited transcript")
+        self._mock_agent.enrich.assert_called_once_with("edited transcript")
+        self._mock_classifier.classify.assert_called_once_with("edited transcript")
         self._mock_scratch.save_transcription.assert_any_call("edited transcript")
 
     @pytest.mark.usefixtures("_mock_listen_pipeline")
@@ -897,7 +913,8 @@ class TestListenReviewGate:
             await _listen_async(None, None, mode=None, verbose=False, no_review=False)
 
         assert exc_info.value.exit_code == 0
-        self._mock_extractor.extract.assert_not_called()
+        self._mock_agent.enrich.assert_not_called()
+        self._mock_classifier.classify.assert_not_called()
 
     @pytest.mark.usefixtures("_mock_listen_pipeline")
     async def test_review_metadata_uses_final_text(self, mocker):
