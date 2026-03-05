@@ -509,3 +509,57 @@ class TestChunkAudio:
         chunks = AudioRecorder.chunk_audio(segment, max_duration=30.0)
         assert abs(chunks[0].duration - 30.0) < 1e-6
         assert abs(chunks[1].duration - 15.0) < 1e-6
+
+    def test_just_over_max_duration(self):
+        """Test audio at 30.001s splits into 30s + tiny chunk."""
+        samples = 16000 * 30 + 16  # 30s + 1ms
+        data = np.random.randn(samples, 1).astype(np.float32)
+        segment = AudioSegment(data=data, sample_rate=16000, duration=samples / 16000)
+        chunks = AudioRecorder.chunk_audio(segment, max_duration=30.0)
+        assert len(chunks) == 2
+        assert chunks[0].data.shape[0] == 16000 * 30
+        assert chunks[1].data.shape[0] == 16
+
+    def test_very_short_last_chunk(self):
+        """Test a very short last chunk (1 sample) is preserved."""
+        samples = 16000 * 30 + 1
+        data = np.random.randn(samples, 1).astype(np.float32)
+        segment = AudioSegment(data=data, sample_rate=16000, duration=samples / 16000)
+        chunks = AudioRecorder.chunk_audio(segment, max_duration=30.0)
+        assert len(chunks) == 2
+        assert chunks[1].data.shape[0] == 1
+
+    def test_three_chunks(self):
+        """Test 90s audio splits into exactly 3 chunks of 30s."""
+        data = np.random.randn(16000 * 90, 1).astype(np.float32)
+        segment = AudioSegment(data=data, sample_rate=16000, duration=90.0)
+        chunks = AudioRecorder.chunk_audio(segment, max_duration=30.0)
+        assert len(chunks) == 3
+        for chunk in chunks:
+            assert chunk.data.shape[0] == 16000 * 30
+
+    def test_data_integrity_across_chunks(self):
+        """Test concatenating chunk data equals original data."""
+        data = np.random.randn(16000 * 45, 1).astype(np.float32)
+        segment = AudioSegment(data=data, sample_rate=16000, duration=45.0)
+        chunks = AudioRecorder.chunk_audio(segment, max_duration=30.0)
+        reconstructed = np.concatenate([c.data for c in chunks], axis=0)
+        np.testing.assert_array_equal(reconstructed, data)
+
+    def test_custom_max_duration(self):
+        """Test chunking with a non-default max_duration (10s)."""
+        data = np.random.randn(16000 * 25, 1).astype(np.float32)
+        segment = AudioSegment(data=data, sample_rate=16000, duration=25.0)
+        chunks = AudioRecorder.chunk_audio(segment, max_duration=10.0)
+        assert len(chunks) == 3
+        assert chunks[0].data.shape[0] == 16000 * 10
+        assert chunks[1].data.shape[0] == 16000 * 10
+        assert chunks[2].data.shape[0] == 16000 * 5
+
+    def test_sub_second_audio(self):
+        """Test very short audio (0.1s) returns single chunk."""
+        data = np.random.randn(1600, 1).astype(np.float32)
+        segment = AudioSegment(data=data, sample_rate=16000, duration=0.1)
+        chunks = AudioRecorder.chunk_audio(segment, max_duration=30.0)
+        assert len(chunks) == 1
+        assert chunks[0] is segment

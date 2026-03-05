@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-05
+
+### Added
+
+- **WebSocket streaming STT** — audio > 30s now uses Sarvam's WebSocket streaming API (`wss://api.sarvam.ai/speech-to-text/ws`) instead of broken client-side chunking
+- `_transcribe_streaming()` method on `SarvamSTT` for long audio transcription
+- 10 streaming transcription tests, 4 routing tests, 5 chunk_audio edge case tests
+- `websockets>=13.0` dependency
+
+### Changed
+
+- **`transcribe()` routing** — short audio (≤ 30s) uses REST API, long audio uses WebSocket streaming
+- Removed client-side audio chunking path for long audio (was splitting words mid-sentence)
+- 536 tests with 95.4% code coverage
+
+### Fixed
+
+- **Broken transcription for audio > 30s** — chunking at arbitrary 30-second boundaries split words/sentences, producing incoherent output
+
 ## [0.7.0] - 2026-03-04
 
 ### Added

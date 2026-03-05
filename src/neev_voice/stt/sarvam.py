@@ -1,21 +1,24 @@
 """Sarvam AI Speech-to-Text provider.
 
-Uses the Sarvam AI REST API with the saaras:v3 model.
+Uses the Sarvam AI REST API with the saaras:v3 model for short audio
+and the Sarvam WebSocket streaming API for long audio.
 Supports multiple transcription modes: translate (Hindi to English),
 codemix (Hindi-English mixed), and formal (Devanagari).
 Audio longer than the configured max duration (default 30s) is
-automatically chunked, transcribed per-chunk, and merged.
+sent via WebSocket streaming instead of REST chunking.
 """
 
+import base64
+import json
 from pathlib import Path
+from urllib.parse import urlencode
 
 import httpx
-import numpy as np
 import structlog
+import websockets
 from scipy.io import wavfile
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-from neev_voice.audio.recorder import AudioRecorder, AudioSegment
 from neev_voice.config import NeevSettings
 from neev_voice.exceptions import NeevConfigError, NeevSTTError
 from neev_voice.stt.base import STTProvider, TranscriptionResult
@@ -46,6 +49,7 @@ def _is_transient_error(exc: BaseException) -> bool:
 
 
 SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
+SARVAM_STT_WS_URL = "wss://api.sarvam.ai/speech-to-text/ws"
 
 
 class SarvamSTT(STTProvider):
@@ -53,8 +57,9 @@ class SarvamSTT(STTProvider):
 
     Transcribes audio using Sarvam AI's saaras:v3 model with a
     configurable output mode (translate, codemix, or formal).
-    Audio exceeding ``settings.stt_max_audio_duration`` is split
-    into chunks, each transcribed separately, then merged.
+    Short audio (≤ max duration) uses the REST API. Long audio
+    uses the WebSocket streaming API for seamless transcription
+    without client-side chunking.
 
     Attributes:
         settings: Application settings containing the Sarvam API key and STT mode.
@@ -96,10 +101,10 @@ class SarvamSTT(STTProvider):
     async def transcribe(self, audio_path: Path) -> TranscriptionResult:
         """Transcribe an audio file using Sarvam AI API.
 
-        If the audio is longer than ``settings.stt_max_audio_duration``,
-        it is split into chunks, each chunk is transcribed via
-        ``_transcribe_single``, and the results are merged (text
-        concatenated, confidence averaged).
+        Short audio (≤ ``settings.stt_max_audio_duration``) is sent to the
+        REST API via ``_transcribe_single``. Long audio is sent to the
+        WebSocket streaming API via ``_transcribe_streaming``, which handles
+        long audio natively without client-side chunking.
 
         Args:
             audio_path: Path to the WAV audio file to transcribe.
@@ -122,22 +127,8 @@ class SarvamSTT(STTProvider):
         if duration <= max_duration:
             return await self._transcribe_single(audio_path)
 
-        # Convert int16 WAV data to float32 for AudioSegment
-        float_data = raw_data.astype(np.float32) / 32767.0
-        segment = AudioSegment(data=float_data, sample_rate=sample_rate, duration=duration)
-        chunks = AudioRecorder.chunk_audio(segment, max_duration=max_duration)
-        logger.info("transcribe_chunked", num_chunks=len(chunks))
-
-        results: list[TranscriptionResult] = []
-        for chunk in chunks:
-            chunk_path = AudioRecorder.save_wav(chunk)
-            try:
-                result = await self._transcribe_single(chunk_path)
-                results.append(result)
-            finally:
-                chunk_path.unlink(missing_ok=True)
-
-        return self._merge_results(results)
+        logger.info("transcribe_streaming", duration_s=round(duration, 2))
+        return await self._transcribe_streaming(audio_path)
 
     @retry(
         stop=stop_after_attempt(3),
@@ -198,6 +189,100 @@ class SarvamSTT(STTProvider):
             language=result.get("language_code", "hi-IN"),
             confidence=result.get("confidence", 0.0),
             provider="sarvam",
+        )
+
+    async def _transcribe_streaming(self, audio_path: Path) -> TranscriptionResult:
+        """Transcribe audio via Sarvam WebSocket streaming API.
+
+        Reads the WAV file, sends base64-encoded audio over a WebSocket
+        connection, sends a flush signal, and collects transcript responses.
+        Handles VAD event messages (skips them) and error responses.
+
+        Args:
+            audio_path: Path to the WAV audio file to transcribe.
+
+        Returns:
+            TranscriptionResult with merged transcript and metadata.
+
+        Raises:
+            NeevSTTError: If the WebSocket connection fails or server returns an error.
+        """
+        params = urlencode(
+            {
+                "model": "saaras:v3",
+                "language-code": "hi-IN",
+                "mode": self.settings.stt_mode.value,
+                "sample_rate": "16000",
+                "input_audio_codec": "audio/wav",
+                "flush_signal": "true",
+            }
+        )
+        url = f"{SARVAM_STT_WS_URL}?{params}"
+        headers = {"Api-Subscription-Key": self.settings.sarvam_api_key}
+
+        try:
+            async with websockets.connect(url, additional_headers=headers) as ws:
+                # Read and send base64-encoded audio
+                audio_bytes = audio_path.read_bytes()
+                audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+                audio_msg = json.dumps(
+                    {
+                        "audio": {
+                            "data": audio_b64,
+                            "sample_rate": "16000",
+                            "encoding": "audio/wav",
+                        }
+                    }
+                )
+                await ws.send(audio_msg)
+
+                # Send flush signal to force processing
+                await ws.send(json.dumps({"type": "flush"}))
+
+                # Collect transcript responses
+                transcripts: list[str] = []
+                confidences: list[float] = []
+                language = "hi-IN"
+
+                async for message in ws:
+                    parsed = json.loads(message)
+                    msg_type = parsed.get("type", "")
+
+                    if msg_type == "error":
+                        error_data = parsed.get("data", {})
+                        error_msg = error_data.get("error", "Unknown streaming error")
+                        raise NeevSTTError(f"Streaming STT error: {error_msg}")
+
+                    if msg_type == "data":
+                        data = parsed.get("data", {})
+                        transcript = data.get("transcript", "")
+                        if transcript:
+                            transcripts.append(transcript)
+                        confidence = data.get("language_probability", 0.0)
+                        if confidence:
+                            confidences.append(confidence)
+                        if data.get("language_code"):
+                            language = data["language_code"]
+
+                    # Skip "events" (VAD signals) and any other message types
+
+        except websockets.exceptions.WebSocketException as exc:
+            raise NeevSTTError(f"Streaming STT connection failed: {exc}") from exc
+
+        merged_text = " ".join(transcripts)
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+
+        logger.info(
+            "streaming_transcribe_complete",
+            num_segments=len(transcripts),
+            text_length=len(merged_text),
+        )
+
+        return TranscriptionResult(
+            text=merged_text,
+            language=language,
+            confidence=avg_confidence,
+            provider="sarvam-streaming",
         )
 
     @staticmethod

@@ -191,11 +191,11 @@ class TestSarvamSTTTranscribe:
         assert call_kwargs.kwargs["data"]["mode"] == "formal"
 
 
-class TestSarvamSTTChunkedTranscribe:
-    """Tests for chunked transcription of audio > 30s."""
+class TestSarvamSTTTranscribeRouting:
+    """Tests for transcribe() routing: REST for short audio, streaming for long."""
 
-    async def test_short_audio_single_api_call(self, settings, tmp_path, mocker):
-        """Test audio ≤30s results in a single API call."""
+    async def test_short_audio_uses_rest(self, settings, tmp_path, mocker):
+        """Test audio ≤30s uses REST API via _transcribe_single."""
         audio_file = _make_wav(tmp_path / "short.wav", duration_s=10.0)
 
         mock_client = _mock_sarvam_client(
@@ -211,108 +211,64 @@ class TestSarvamSTTChunkedTranscribe:
         result = await provider.transcribe(audio_file)
 
         assert result.text == "hello short"
+        assert result.provider == "sarvam"
         assert mock_client.post.call_count == 1
 
-    async def test_long_audio_multiple_api_calls(self, settings, tmp_path, mocker):
-        """Test audio >30s results in multiple API calls and merged result."""
+    async def test_long_audio_uses_streaming(self, settings, tmp_path, mocker):
+        """Test audio >30s routes to _transcribe_streaming."""
         audio_file = _make_wav(tmp_path / "long.wav", duration_s=60.0)
 
-        call_count = 0
-        responses = [
-            {"transcript": "first chunk", "language_code": "hi-IN", "confidence": 0.9},
-            {"transcript": "second chunk", "language_code": "hi-IN", "confidence": 0.8},
-        ]
-
-        def make_response(idx):
-            """Create a mock response for the given chunk index."""
-            resp = mocker.MagicMock()
-            resp.status_code = 200
-            resp.json.return_value = responses[idx]
-            return resp
-
-        async def mock_post(*args, **kwargs):
-            """Return successive mock responses for each chunk."""
-            nonlocal call_count
-            idx = min(call_count, len(responses) - 1)
-            call_count += 1
-            return make_response(idx)
-
-        mock_client = mocker.AsyncMock()
-        mock_client.is_closed = False
-        mock_client.post = mocker.AsyncMock(side_effect=mock_post)
-
-        mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
+        mock_streaming = mocker.AsyncMock(
+            return_value=TranscriptionResult(
+                text="streamed result",
+                language="hi-IN",
+                confidence=0.9,
+                provider="sarvam-streaming",
+            )
+        )
+        mocker.patch.object(SarvamSTT, "_transcribe_streaming", mock_streaming)
 
         provider = SarvamSTT(settings)
         result = await provider.transcribe(audio_file)
 
-        assert call_count == 2
-        assert result.text == "first chunk second chunk"
-        assert abs(result.confidence - 0.85) < 1e-6
-        assert result.language == "hi-IN"
+        assert result.text == "streamed result"
+        assert result.provider == "sarvam-streaming"
+        mock_streaming.assert_awaited_once_with(audio_file)
+
+    async def test_exactly_30s_uses_rest(self, settings, tmp_path, mocker):
+        """Test audio exactly at max duration uses REST API."""
+        audio_file = _make_wav(tmp_path / "exact.wav", duration_s=30.0)
+
+        _mock_sarvam_client(
+            mocker,
+            {"transcript": "exact 30s", "language_code": "hi-IN", "confidence": 0.9},
+        )
+
+        provider = SarvamSTT(settings)
+        result = await provider.transcribe(audio_file)
+
+        assert result.text == "exact 30s"
         assert result.provider == "sarvam"
 
-    async def test_merged_text_is_space_joined(self, settings, tmp_path, mocker):
-        """Test merged text from chunks is space-joined."""
-        audio_file = _make_wav(tmp_path / "long.wav", duration_s=45.0)
+    async def test_just_over_30s_uses_streaming(self, settings, tmp_path, mocker):
+        """Test audio just over max duration routes to streaming."""
+        audio_file = _make_wav(tmp_path / "over.wav", duration_s=30.1)
 
-        call_count = 0
-        responses = [
-            {"transcript": "hello", "language_code": "hi-IN", "confidence": 0.9},
-            {"transcript": "world", "language_code": "hi-IN", "confidence": 0.8},
-        ]
-
-        async def mock_post(*args, **kwargs):
-            """Return successive mock responses."""
-            nonlocal call_count
-            idx = min(call_count, len(responses) - 1)
-            call_count += 1
-            resp = mocker.MagicMock()
-            resp.status_code = 200
-            resp.json.return_value = responses[idx]
-            return resp
-
-        mock_client = mocker.AsyncMock()
-        mock_client.is_closed = False
-        mock_client.post = mocker.AsyncMock(side_effect=mock_post)
-
-        mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
+        mock_streaming = mocker.AsyncMock(
+            return_value=TranscriptionResult(
+                text="streamed over 30s",
+                language="hi-IN",
+                confidence=0.88,
+                provider="sarvam-streaming",
+            )
+        )
+        mocker.patch.object(SarvamSTT, "_transcribe_streaming", mock_streaming)
 
         provider = SarvamSTT(settings)
         result = await provider.transcribe(audio_file)
 
-        assert result.text == "hello world"
-
-    async def test_merged_confidence_is_averaged(self, settings, tmp_path, mocker):
-        """Test merged confidence is the average of chunk confidences."""
-        audio_file = _make_wav(tmp_path / "long.wav", duration_s=60.0)
-
-        call_count = 0
-        responses = [
-            {"transcript": "a", "language_code": "hi-IN", "confidence": 1.0},
-            {"transcript": "b", "language_code": "hi-IN", "confidence": 0.5},
-        ]
-
-        async def mock_post(*args, **kwargs):
-            """Return successive mock responses."""
-            nonlocal call_count
-            idx = min(call_count, len(responses) - 1)
-            call_count += 1
-            resp = mocker.MagicMock()
-            resp.status_code = 200
-            resp.json.return_value = responses[idx]
-            return resp
-
-        mock_client = mocker.AsyncMock()
-        mock_client.is_closed = False
-        mock_client.post = mocker.AsyncMock(side_effect=mock_post)
-
-        mocker.patch("neev_voice.stt.sarvam.httpx.AsyncClient", return_value=mock_client)
-
-        provider = SarvamSTT(settings)
-        result = await provider.transcribe(audio_file)
-
-        assert abs(result.confidence - 0.75) < 1e-6
+        assert result.provider == "sarvam-streaming"
+        mock_streaming.assert_awaited_once()
 
 
 class TestMergeResults:
@@ -512,3 +468,255 @@ class TestGetSTTProvider:
         """Test error message lists available providers."""
         with pytest.raises(NeevConfigError, match="sarvam"):
             get_stt_provider("unknown", settings)
+
+
+class TestSarvamStreamingTranscribe:
+    """Tests for WebSocket streaming transcription of long audio."""
+
+    @pytest.fixture
+    def _mock_ws(self, mocker):
+        """Create a mock WebSocket connection with configurable responses.
+
+        Sets up a mock websockets.connect context manager. Tests can configure
+        responses via self._ws_responses before calling transcribe.
+        """
+        self._ws_sent = []
+        self._ws_responses = []
+
+        mock_ws = mocker.AsyncMock()
+
+        async def mock_send(msg):
+            self._ws_sent.append(msg)
+
+        mock_ws.send = mock_send
+
+        async def mock_aiter():
+            for resp in self._ws_responses:
+                yield resp
+
+        mock_ws.__aiter__ = lambda s: mock_aiter()
+
+        mock_connect = mocker.patch("neev_voice.stt.sarvam.websockets.connect")
+        mock_ctx = mocker.AsyncMock()
+        mock_ctx.__aenter__ = mocker.AsyncMock(return_value=mock_ws)
+        mock_ctx.__aexit__ = mocker.AsyncMock(return_value=False)
+        mock_connect.return_value = mock_ctx
+        self._mock_connect = mock_connect
+        self._mock_ws = mock_ws
+
+    @pytest.mark.usefixtures("_mock_ws")
+    async def test_streaming_success(self, settings, tmp_path):
+        """Test streaming transcription returns correct result."""
+        audio_file = _make_wav(tmp_path / "long.wav", duration_s=1.0)
+
+        self._ws_responses = [
+            json.dumps(
+                {
+                    "type": "data",
+                    "data": {
+                        "transcript": "hello world namaste",
+                        "language_code": "hi-IN",
+                        "language_probability": 0.95,
+                    },
+                }
+            ),
+        ]
+
+        provider = SarvamSTT(settings)
+        result = await provider._transcribe_streaming(audio_file)
+
+        assert result.text == "hello world namaste"
+        assert result.language == "hi-IN"
+        assert result.confidence == 0.95
+        assert result.provider == "sarvam-streaming"
+
+    @pytest.mark.usefixtures("_mock_ws")
+    async def test_streaming_sends_base64_audio(self, settings, tmp_path):
+        """Test streaming sends base64-encoded audio data."""
+        import base64
+
+        audio_file = _make_wav(tmp_path / "test.wav", duration_s=0.5)
+
+        self._ws_responses = [
+            json.dumps(
+                {
+                    "type": "data",
+                    "data": {"transcript": "test", "language_code": "hi-IN"},
+                }
+            ),
+        ]
+
+        provider = SarvamSTT(settings)
+        await provider._transcribe_streaming(audio_file)
+
+        assert len(self._ws_sent) >= 2
+        audio_msg = json.loads(self._ws_sent[0])
+        assert "audio" in audio_msg
+        assert "data" in audio_msg["audio"]
+        # Verify it's valid base64
+        base64.b64decode(audio_msg["audio"]["data"])
+
+    @pytest.mark.usefixtures("_mock_ws")
+    async def test_streaming_sends_flush_signal(self, settings, tmp_path):
+        """Test streaming sends flush signal after audio."""
+        audio_file = _make_wav(tmp_path / "test.wav", duration_s=0.5)
+
+        self._ws_responses = [
+            json.dumps(
+                {
+                    "type": "data",
+                    "data": {"transcript": "test", "language_code": "hi-IN"},
+                }
+            ),
+        ]
+
+        provider = SarvamSTT(settings)
+        await provider._transcribe_streaming(audio_file)
+
+        flush_msg = json.loads(self._ws_sent[-1])
+        assert flush_msg == {"type": "flush"}
+
+    @pytest.mark.usefixtures("_mock_ws")
+    async def test_streaming_multiple_segments(self, settings, tmp_path):
+        """Test streaming merges multiple transcript segments."""
+        audio_file = _make_wav(tmp_path / "long.wav", duration_s=1.0)
+
+        self._ws_responses = [
+            json.dumps(
+                {
+                    "type": "data",
+                    "data": {
+                        "transcript": "first part",
+                        "language_code": "hi-IN",
+                        "language_probability": 0.9,
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "data",
+                    "data": {
+                        "transcript": "second part",
+                        "language_code": "hi-IN",
+                        "language_probability": 0.8,
+                    },
+                }
+            ),
+        ]
+
+        provider = SarvamSTT(settings)
+        result = await provider._transcribe_streaming(audio_file)
+
+        assert result.text == "first part second part"
+        assert abs(result.confidence - 0.85) < 1e-6
+
+    @pytest.mark.usefixtures("_mock_ws")
+    async def test_streaming_passes_auth_header(self, settings, tmp_path):
+        """Test streaming passes API key in headers."""
+        audio_file = _make_wav(tmp_path / "test.wav", duration_s=0.5)
+
+        self._ws_responses = [
+            json.dumps(
+                {
+                    "type": "data",
+                    "data": {"transcript": "test", "language_code": "hi-IN"},
+                }
+            ),
+        ]
+
+        provider = SarvamSTT(settings)
+        await provider._transcribe_streaming(audio_file)
+
+        call_kwargs = self._mock_connect.call_args.kwargs
+        assert call_kwargs["additional_headers"]["Api-Subscription-Key"] == "test-api-key-123"
+
+    @pytest.mark.usefixtures("_mock_ws")
+    async def test_streaming_url_contains_params(self, settings, tmp_path):
+        """Test streaming URL includes model, mode, and language params."""
+        audio_file = _make_wav(tmp_path / "test.wav", duration_s=0.5)
+
+        self._ws_responses = [
+            json.dumps(
+                {
+                    "type": "data",
+                    "data": {"transcript": "test", "language_code": "hi-IN"},
+                }
+            ),
+        ]
+
+        provider = SarvamSTT(settings)
+        await provider._transcribe_streaming(audio_file)
+
+        url = self._mock_connect.call_args.args[0]
+        assert "model=saaras%3Av3" in url or "model=saaras:v3" in url
+        assert "mode=translate" in url
+        assert "language-code=hi-IN" in url
+        assert "flush_signal=true" in url
+
+    @pytest.mark.usefixtures("_mock_ws")
+    async def test_streaming_error_response(self, settings, tmp_path):
+        """Test streaming raises NeevSTTError on error response."""
+        audio_file = _make_wav(tmp_path / "test.wav", duration_s=0.5)
+
+        self._ws_responses = [
+            json.dumps(
+                {
+                    "type": "error",
+                    "data": {"error": "Invalid audio format", "code": "INVALID_FORMAT"},
+                }
+            ),
+        ]
+
+        provider = SarvamSTT(settings)
+        with pytest.raises(NeevSTTError, match="Invalid audio format"):
+            await provider._transcribe_streaming(audio_file)
+
+    @pytest.mark.usefixtures("_mock_ws")
+    async def test_streaming_skips_event_messages(self, settings, tmp_path):
+        """Test streaming ignores VAD event messages."""
+        audio_file = _make_wav(tmp_path / "test.wav", duration_s=0.5)
+
+        self._ws_responses = [
+            json.dumps({"type": "events", "data": {"signal_type": "START_SPEECH"}}),
+            json.dumps(
+                {
+                    "type": "data",
+                    "data": {"transcript": "actual text", "language_code": "hi-IN"},
+                }
+            ),
+            json.dumps({"type": "events", "data": {"signal_type": "END_SPEECH"}}),
+        ]
+
+        provider = SarvamSTT(settings)
+        result = await provider._transcribe_streaming(audio_file)
+
+        assert result.text == "actual text"
+
+    @pytest.mark.usefixtures("_mock_ws")
+    async def test_streaming_empty_transcript(self, settings, tmp_path):
+        """Test streaming returns empty text when no transcripts received."""
+        audio_file = _make_wav(tmp_path / "test.wav", duration_s=0.5)
+
+        self._ws_responses = []
+
+        provider = SarvamSTT(settings)
+        result = await provider._transcribe_streaming(audio_file)
+
+        assert result.text == ""
+        assert result.confidence == 0.0
+
+    @pytest.mark.usefixtures("_mock_ws")
+    async def test_streaming_connection_error(self, settings, tmp_path, mocker):
+        """Test streaming raises NeevSTTError on connection failure."""
+        import websockets
+
+        audio_file = _make_wav(tmp_path / "test.wav", duration_s=0.5)
+
+        mocker.patch(
+            "neev_voice.stt.sarvam.websockets.connect",
+            side_effect=websockets.exceptions.WebSocketException("Connection refused"),
+        )
+
+        provider = SarvamSTT(settings)
+        with pytest.raises(NeevSTTError, match="Streaming STT connection failed"):
+            await provider._transcribe_streaming(audio_file)
