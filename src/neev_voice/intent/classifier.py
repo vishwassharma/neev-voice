@@ -103,11 +103,6 @@ class IntentClassifier:
             NeevLLMError: If the CLI returns non-zero exit code with no output.
         """
         env = dict(os.environ)
-        api_key = self.settings.resolved_llm_api_key
-        if api_key:
-            env["ANTHROPIC_API_KEY"] = api_key
-        if self.settings.resolved_llm_api_base:
-            env["ANTHROPIC_BASE_URL"] = self.settings.resolved_llm_api_base
 
         cmd = [
             "claude",

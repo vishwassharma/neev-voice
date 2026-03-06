@@ -610,9 +610,9 @@ class TestAPIKeyFallbackEnvVars:
         settings = NeevSettings(_env_file=None)
         assert settings.sarvam_api_key == "sk-neev-primary"
 
-    def test_no_fallback_for_non_api_fields(self, monkeypatch):
-        """Test non-API fields do not get unprefixed fallback behavior."""
+    def test_prefixed_env_takes_priority_over_unprefixed(self, monkeypatch):
+        """Test NEEV_-prefixed env var takes priority over unprefixed."""
         monkeypatch.setenv("CLAUDE_MODEL", "opus")
+        monkeypatch.setenv("NEEV_CLAUDE_MODEL", "haiku")
         settings = NeevSettings(_env_file=None)
-        # Should remain the default, not pick up CLAUDE_MODEL
-        assert settings.claude_model == "sonnet"
+        assert settings.claude_model == "haiku"

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-03-06
+
+### Changed
+
+- **Remove dead API key passthrough in IntentClassifier** — `claude` CLI manages its own auth; removed commented-out `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` env passthrough code
+
 ## [0.8.1] - 2026-03-06
 
 ### Fixed

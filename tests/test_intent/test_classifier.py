@@ -166,8 +166,9 @@ class TestIntentClassifierClassify:
         with pytest.raises(NeevLLMError, match="Failed to parse"):
             await classifier.classify("test")
 
-    async def test_classify_sets_api_key_in_env_when_available(self, settings, mocker):
-        """Test classify passes ANTHROPIC_API_KEY when configured."""
+    async def test_classify_does_not_override_api_key_in_env(self, settings, mocker):
+        """Test classify does not set ANTHROPIC_API_KEY (claude CLI manages auth)."""
+        mocker.patch.dict("os.environ", {"ANTHROPIC_API_KEY": "original-key"})
         classifier = IntentClassifier(settings)
         response = json.dumps(
             {
@@ -185,7 +186,8 @@ class TestIntentClassifierClassify:
         await classifier.classify("test")
 
         call_kwargs = mock_subprocess.call_args.kwargs
-        assert call_kwargs["env"]["ANTHROPIC_API_KEY"] == "test-key"
+        # Env should pass through os.environ as-is, not override with settings
+        assert call_kwargs["env"]["ANTHROPIC_API_KEY"] == "original-key"
 
     async def test_classify_uses_claude_cli(self, settings, mocker):
         """Test classify invokes the claude CLI command."""
