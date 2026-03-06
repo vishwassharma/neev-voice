@@ -5,7 +5,7 @@ A Python CLI voice agent for Hindi-English mixed speech. Listens to user voice, 
 ## Features
 
 - **Push-to-talk recording** -- hold SPACEBAR to record, release to pause, ENTER to send, ESC to cancel
-- **Hindi-English STT** via Sarvam AI (translate, codemix, formal modes)
+- **Hindi-English STT** via Sarvam AI (translate, codemix, formal modes) — REST API for short audio, WebSocket streaming for long audio (>30s)
 - **Text-to-speech** with Edge TTS (free) and Sarvam Bulbul providers
 - **Intent extraction** -- classifies speech into problem, solution, clue, agreement, disagreement, question
 - **Document discussion** -- walks through a document section-by-section with voice input, tracks agreement/disagreement
@@ -29,7 +29,7 @@ Install globally so the `neev` command is available everywhere:
 
 ```bash
 # From GitHub (latest release)
-uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.3.1
+uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.8.1
 
 # From GitHub (latest main)
 uv tool install git+https://github.com/vishwassharma/neev-voice.git@main
@@ -45,14 +45,14 @@ To update when the remote repo changes:
 uv tool upgrade neev-voice
 
 # If pinned to a tag, reinstall with the new tag
-uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.4.0 --force
+uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.8.1 --force
 ```
 
 ### As a project dependency
 
 ```bash
 # Add to another project
-uv add git+https://github.com/vishwassharma/neev-voice.git@v0.3.1
+uv add git+https://github.com/vishwassharma/neev-voice.git@v0.8.1
 ```
 
 ### For development
@@ -162,7 +162,7 @@ src/neev_voice/
         extractor.py     # intent classification
     discussion/
         manager.py       # document discussion orchestrator
-tests/                   # mirrors src/ structure, 396 tests
+tests/                   # mirrors src/ structure, 537 tests
 scripts/
     generate_release_notes.py  # changelog/git-based release notes
 ```

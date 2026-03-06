@@ -8,6 +8,7 @@ Audio longer than the configured max duration (default 30s) is
 sent via WebSocket streaming instead of REST chunking.
 """
 
+import asyncio
 import base64
 import json
 from pathlib import Path
@@ -191,15 +192,20 @@ class SarvamSTT(STTProvider):
             provider="sarvam",
         )
 
-    async def _transcribe_streaming(self, audio_path: Path) -> TranscriptionResult:
+    async def _transcribe_streaming(
+        self, audio_path: Path, recv_timeout: float = 15.0
+    ) -> TranscriptionResult:
         """Transcribe audio via Sarvam WebSocket streaming API.
 
         Reads the WAV file, sends base64-encoded audio over a WebSocket
         connection, sends a flush signal, and collects transcript responses.
-        Handles VAD event messages (skips them) and error responses.
+        Uses a per-message receive timeout since the streaming WebSocket
+        stays open indefinitely.
 
         Args:
             audio_path: Path to the WAV audio file to transcribe.
+            recv_timeout: Seconds to wait for each response before assuming
+                all transcripts have been received. Defaults to 15.0.
 
         Returns:
             TranscriptionResult with merged transcript and metadata.
@@ -209,11 +215,9 @@ class SarvamSTT(STTProvider):
         """
         params = urlencode(
             {
-                "model": "saaras:v3",
                 "language-code": "hi-IN",
+                "model": "saaras:v3",
                 "mode": self.settings.stt_mode.value,
-                "sample_rate": "16000",
-                "input_audio_codec": "audio/wav",
                 "flush_signal": "true",
             }
         )
@@ -229,7 +233,7 @@ class SarvamSTT(STTProvider):
                     {
                         "audio": {
                             "data": audio_b64,
-                            "sample_rate": "16000",
+                            "sample_rate": 16000,
                             "encoding": "audio/wav",
                         }
                     }
@@ -239,12 +243,18 @@ class SarvamSTT(STTProvider):
                 # Send flush signal to force processing
                 await ws.send(json.dumps({"type": "flush"}))
 
-                # Collect transcript responses
+                # Collect transcript responses with per-message timeout
                 transcripts: list[str] = []
                 confidences: list[float] = []
                 language = "hi-IN"
 
-                async for message in ws:
+                while True:
+                    try:
+                        message = await asyncio.wait_for(ws.recv(), timeout=recv_timeout)
+                    except TimeoutError:
+                        logger.debug("streaming_recv_timeout", segments=len(transcripts))
+                        break
+
                     parsed = json.loads(message)
                     msg_type = parsed.get("type", "")
 

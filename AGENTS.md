@@ -17,7 +17,7 @@ cp .env.example .env         # configure API keys
 ## Build & Test
 
 ```bash
-uv run pytest                # run full test suite (356 tests, >94% coverage)
+uv run pytest                # run full test suite (537 tests, >95% coverage)
 uv run ruff check src/ tests/  # lint
 uv run ruff format src/ tests/  # format
 pre-commit run --all-files   # all pre-commit hooks

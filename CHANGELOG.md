@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-03-06
+
+### Fixed
+
+- **Streaming STT not returning responses** — removed `sample_rate` and `input_audio_codec` from WebSocket URL query params which caused Sarvam server to silently drop all responses
+- **Streaming connection hangs indefinitely** — replaced `async for` receive loop with timeout-based `recv()` (15s per-message timeout) since the streaming WebSocket stays open after all responses
+- **`sample_rate` type in audio message** — changed from string `"16000"` to integer `16000` to match Sarvam SDK format
+- 537 tests with 95.5% code coverage
+
 ## [0.8.0] - 2026-03-05
 
 ### Added

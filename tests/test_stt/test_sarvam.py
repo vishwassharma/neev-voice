@@ -479,6 +479,8 @@ class TestSarvamStreamingTranscribe:
 
         Sets up a mock websockets.connect context manager. Tests can configure
         responses via self._ws_responses before calling transcribe.
+        The mock supports recv() which returns responses in order, then
+        raises TimeoutError to simulate the receive timeout.
         """
         self._ws_sent = []
         self._ws_responses = []
@@ -490,11 +492,16 @@ class TestSarvamStreamingTranscribe:
 
         mock_ws.send = mock_send
 
-        async def mock_aiter():
-            for resp in self._ws_responses:
-                yield resp
+        self._recv_index = 0
 
-        mock_ws.__aiter__ = lambda s: mock_aiter()
+        async def mock_recv():
+            if self._recv_index < len(self._ws_responses):
+                resp = self._ws_responses[self._recv_index]
+                self._recv_index += 1
+                return resp
+            raise TimeoutError
+
+        mock_ws.recv = mock_recv
 
         mock_connect = mocker.patch("neev_voice.stt.sarvam.websockets.connect")
         mock_ctx = mocker.AsyncMock()
@@ -532,7 +539,7 @@ class TestSarvamStreamingTranscribe:
 
     @pytest.mark.usefixtures("_mock_ws")
     async def test_streaming_sends_base64_audio(self, settings, tmp_path):
-        """Test streaming sends base64-encoded audio data."""
+        """Test streaming sends base64-encoded audio data with correct format."""
         import base64
 
         audio_file = _make_wav(tmp_path / "test.wav", duration_s=0.5)
@@ -555,6 +562,9 @@ class TestSarvamStreamingTranscribe:
         assert "data" in audio_msg["audio"]
         # Verify it's valid base64
         base64.b64decode(audio_msg["audio"]["data"])
+        # sample_rate must be int, not string (Sarvam API requirement)
+        assert audio_msg["audio"]["sample_rate"] == 16000
+        assert isinstance(audio_msg["audio"]["sample_rate"], int)
 
     @pytest.mark.usefixtures("_mock_ws")
     async def test_streaming_sends_flush_signal(self, settings, tmp_path):
@@ -652,6 +662,9 @@ class TestSarvamStreamingTranscribe:
         assert "mode=translate" in url
         assert "language-code=hi-IN" in url
         assert "flush_signal=true" in url
+        # sample_rate and input_audio_codec should NOT be in URL params
+        assert "sample_rate" not in url
+        assert "input_audio_codec" not in url
 
     @pytest.mark.usefixtures("_mock_ws")
     async def test_streaming_error_response(self, settings, tmp_path):
@@ -704,6 +717,31 @@ class TestSarvamStreamingTranscribe:
 
         assert result.text == ""
         assert result.confidence == 0.0
+
+    @pytest.mark.usefixtures("_mock_ws")
+    async def test_streaming_recv_timeout_returns_collected(self, settings, tmp_path):
+        """Test streaming returns collected transcripts when recv times out."""
+        audio_file = _make_wav(tmp_path / "test.wav", duration_s=0.5)
+
+        self._ws_responses = [
+            json.dumps(
+                {
+                    "type": "data",
+                    "data": {
+                        "transcript": "before timeout",
+                        "language_code": "hi-IN",
+                        "language_probability": 0.9,
+                    },
+                }
+            ),
+            # After this, recv() will raise TimeoutError via mock
+        ]
+
+        provider = SarvamSTT(settings)
+        result = await provider._transcribe_streaming(audio_file)
+
+        assert result.text == "before timeout"
+        assert result.confidence == 0.9
 
     @pytest.mark.usefixtures("_mock_ws")
     async def test_streaming_connection_error(self, settings, tmp_path, mocker):
