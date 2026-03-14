@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-03-14
+
+### Changed
+
+- **Version source of truth** — `__version__` in `src/neev_voice/__init__.py` is now the single source; `pyproject.toml` uses `dynamic = ["version"]` via `[tool.hatch.version]`
+- **`VERSION` file** added at repo root, mirroring version for external tooling
+- **bump-my-version** integrated into dev deps; atomically updates `__init__.py`, `VERSION`, and `README.md` install URLs
+- **README.md** updated with current version (v0.9.3 → v0.9.4), discuss command usage, project structure, and bump-my-version release process
+- **AGENTS.md** updated with version bump rules, version source of truth documentation, and new key files
+
 ## [0.9.3] - 2026-03-14
 
 ### Added
@@ -213,7 +223,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `detect-secrets` and `detect-private-key` pre-commit hooks
 - `no-commit-to-branch` hook protecting main branch
 
-[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/vishwassharma/neev-voice/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/vishwassharma/neev-voice/compare/v0.9.0...v0.9.3
 [0.9.1]: https://github.com/vishwassharma/neev-voice/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/vishwassharma/neev-voice/compare/v0.8.2...v0.9.0
