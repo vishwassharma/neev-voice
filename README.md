@@ -67,8 +67,9 @@ cd neev-voice
 # Install dependencies
 uv sync --group dev
 
-# Install pre-commit hooks
+# Install pre-commit hooks (commit + push)
 pre-commit install
+pre-commit install --hook-type pre-push
 
 # Copy and configure environment variables
 cp .env.example .env
