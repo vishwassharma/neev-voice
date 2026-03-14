@@ -1,5 +1,5 @@
 # Pre-commit hooks for neev-voice
-# Install: pre-commit install
+# Install: pre-commit install && pre-commit install --hook-type pre-push
 # Run all: pre-commit run --all-files
 
 repos:
@@ -47,6 +47,16 @@ repos:
         files: ^src/
         pass_filenames: false
         args: ["src/neev_voice/"]
+
+  # Changelog: verify CHANGELOG.md entry exists when pushing version tags
+  - repo: local
+    hooks:
+      - id: changelog-check
+        name: changelog-check
+        entry: scripts/check_changelog_for_tag.sh
+        language: script
+        stages: [pre-push]
+        always_run: true
 
   # Security: detect secrets accidentally committed
   - repo: https://github.com/Yelp/detect-secrets
