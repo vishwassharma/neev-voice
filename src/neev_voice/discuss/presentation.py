@@ -8,6 +8,7 @@ ENTER (start/next concept), and ESC (cancel).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -54,6 +55,7 @@ class PresentationEngine:
         settings: Application settings.
         tts_provider: Text-to-speech provider for audio synthesis.
         prepare_dir: Path to the prepare phase output directory.
+        on_concept_done: Optional callback fired after each concept completes.
     """
 
     def __init__(
@@ -62,6 +64,7 @@ class PresentationEngine:
         settings: NeevSettings,
         tts_provider: TTSProvider | None = None,
         prepare_dir: Path | None = None,
+        on_concept_done: Callable[[int], None] | None = None,
     ) -> None:
         """Initialize the presentation engine.
 
@@ -70,11 +73,14 @@ class PresentationEngine:
             settings: Application settings.
             tts_provider: TTS provider for audio synthesis.
             prepare_dir: Override prepare directory path.
+            on_concept_done: Optional callback called with concept index
+                after each concept's playback completes successfully.
         """
         self.session = session
         self.settings = settings
         self.tts_provider = tts_provider
         self.prepare_dir = prepare_dir or Path(settings.discuss_base_dir) / session.name / "prepare"
+        self.on_concept_done = on_concept_done
 
     def load_transcript(self, concept_index: int) -> str | None:
         """Load the TTS-ready transcript for a concept.
@@ -173,7 +179,9 @@ class PresentationEngine:
             if result.cancelled:
                 return result
 
-            # Playback complete — continue to next concept
+            # Playback complete — notify and continue to next concept
+            if self.on_concept_done:
+                self.on_concept_done(idx)
 
         return PresentationResult(completed=True)
 

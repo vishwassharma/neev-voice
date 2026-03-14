@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from neev_voice.discuss.migration import CURRENT_SCHEMA_VERSION, migrate_session_data
 from neev_voice.discuss.state import DiscussState, StateStack
 
 __all__ = ["SessionInfo", "SessionManager"]
@@ -33,6 +34,8 @@ class SessionInfo:
         created_at: ISO 8601 creation timestamp.
         updated_at: ISO 8601 last-updated timestamp.
         prepare_complete: Whether the prepare phase has finished.
+        presentation_index: Index of the next concept to present (resume point).
+        schema_version: Schema version for migration tracking.
         concepts: List of extracted concept metadata dicts, or None.
     """
 
@@ -45,6 +48,8 @@ class SessionInfo:
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     prepare_complete: bool = False
+    presentation_index: int = 0
+    schema_version: int = CURRENT_SCHEMA_VERSION
     concepts: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,6 +68,8 @@ class SessionInfo:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "prepare_complete": self.prepare_complete,
+            "presentation_index": self.presentation_index,
+            "schema_version": self.schema_version,
             "concepts": self.concepts,
         }
 
@@ -90,6 +97,8 @@ class SessionInfo:
             created_at=data.get("created_at", datetime.now(UTC).isoformat()),
             updated_at=data.get("updated_at", datetime.now(UTC).isoformat()),
             prepare_complete=data.get("prepare_complete", False),
+            presentation_index=data.get("presentation_index", 0),
+            schema_version=data.get("schema_version", CURRENT_SCHEMA_VERSION),
             concepts=data.get("concepts"),
         )
 
@@ -193,6 +202,9 @@ class SessionManager:
     def load_session(self, name: str) -> SessionInfo | None:
         """Load a session from disk by name.
 
+        Automatically migrates older schema versions to the current
+        version and persists the upgraded session.
+
         Args:
             name: Session name to load.
 
@@ -204,7 +216,11 @@ class SessionManager:
             return None
         try:
             data = json.loads(session_path.read_text(encoding="utf-8"))
-            return SessionInfo.from_dict(data)
+            data, migrated = migrate_session_data(data)
+            session = SessionInfo.from_dict(data)
+            if migrated:
+                self.save_session(session)
+            return session
         except (json.JSONDecodeError, KeyError, ValueError):
             return None
 

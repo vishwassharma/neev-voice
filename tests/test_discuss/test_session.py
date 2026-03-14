@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from neev_voice.discuss.migration import CURRENT_SCHEMA_VERSION
 from neev_voice.discuss.session import SessionInfo, SessionManager
 from neev_voice.discuss.state import DiscussState, StateSnapshot, StateStack
 
@@ -37,6 +38,8 @@ class TestSessionInfo:
         assert info.state == DiscussState.PREPARE
         assert info.state_stack.is_empty
         assert info.prepare_complete is False
+        assert info.presentation_index == 0
+        assert info.schema_version == CURRENT_SCHEMA_VERSION
         assert info.concepts is None
         assert info.created_at
         assert info.updated_at
@@ -50,12 +53,14 @@ class TestSessionInfo:
             output_path="/output",
             state=DiscussState.PRESENTATION,
             prepare_complete=True,
+            presentation_index=3,
             concepts=[{"title": "concept1", "index": 0}],
         )
         d = info.to_dict()
         assert d["name"] == "my-session"
         assert d["state"] == "presentation"
         assert d["prepare_complete"] is True
+        assert d["presentation_index"] == 3
         assert d["concepts"] == [{"title": "concept1", "index": 0}]
         assert isinstance(d["state_stack"], list)
 
@@ -71,6 +76,7 @@ class TestSessionInfo:
             "created_at": "2026-01-01T00:00:00",
             "updated_at": "2026-01-02T00:00:00",
             "prepare_complete": True,
+            "presentation_index": 5,
             "concepts": [{"title": "c1"}],
         }
         info = SessionInfo.from_dict(d)
@@ -78,7 +84,20 @@ class TestSessionInfo:
         assert info.state == DiscussState.ENQUIRY
         assert len(info.state_stack) == 1
         assert info.prepare_complete is True
+        assert info.presentation_index == 5
         assert info.concepts == [{"title": "c1"}]
+
+    def test_from_dict_missing_presentation_index_defaults_zero(self) -> None:
+        """SessionInfo from_dict defaults presentation_index to 0 for old sessions."""
+        d = {
+            "name": "old-session",
+            "research_path": "/r",
+            "source_path": "/s",
+            "output_path": "/o",
+            "state": "prepare",
+        }
+        info = SessionInfo.from_dict(d)
+        assert info.presentation_index == 0
 
     def test_from_dict_minimal(self) -> None:
         """SessionInfo from_dict with only required fields."""
@@ -113,6 +132,7 @@ class TestSessionInfo:
             state=DiscussState.ENQUIRY,
             state_stack=stack,
             prepare_complete=True,
+            presentation_index=7,
             concepts=[{"title": "test"}],
         )
         restored = SessionInfo.from_dict(original.to_dict())
@@ -120,6 +140,7 @@ class TestSessionInfo:
         assert restored.state == original.state
         assert len(restored.state_stack) == 1
         assert restored.prepare_complete == original.prepare_complete
+        assert restored.presentation_index == original.presentation_index
         assert restored.concepts == original.concepts
 
 

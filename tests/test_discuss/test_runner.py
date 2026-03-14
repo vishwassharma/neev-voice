@@ -175,8 +175,9 @@ class TestHandlePresentation:
         mock_engine_cls: MagicMock,
         runner: DiscussRunner,
     ) -> None:
-        """Completed presentation stops the runner."""
+        """Completed presentation stops the runner and resets index."""
         runner.session.state = DiscussState.PRESENTATION
+        runner.session.presentation_index = 5
 
         mock_engine = MagicMock()
         mock_engine.run = AsyncMock(return_value=PresentationResult(completed=True))
@@ -184,6 +185,7 @@ class TestHandlePresentation:
 
         result = await runner._handle_presentation()
         assert result is False
+        assert runner.session.presentation_index == 0
 
     @patch("neev_voice.discuss.runner.PresentationEngine")
     async def test_presentation_interrupted(
@@ -249,6 +251,78 @@ class TestHandlePresentation:
         mock_engine.run.assert_called_once_with(start_index=3)
         # Restored data should be cleared
         assert runner._restored_state_data is None
+
+    @patch("neev_voice.discuss.runner.PresentationEngine")
+    async def test_presentation_uses_persisted_index(
+        self,
+        mock_engine_cls: MagicMock,
+        runner: DiscussRunner,
+    ) -> None:
+        """Presentation resumes from session.presentation_index."""
+        runner.session.state = DiscussState.PRESENTATION
+        runner.session.presentation_index = 4
+
+        mock_engine = MagicMock()
+        mock_engine.run = AsyncMock(return_value=PresentationResult(completed=True))
+        mock_engine_cls.return_value = mock_engine
+
+        await runner._handle_presentation()
+
+        mock_engine.run.assert_called_once_with(start_index=4)
+
+    @patch("neev_voice.discuss.runner.PresentationEngine")
+    async def test_presentation_restored_state_overrides_persisted(
+        self,
+        mock_engine_cls: MagicMock,
+        runner: DiscussRunner,
+    ) -> None:
+        """Restored state data takes priority over persisted index."""
+        runner.session.state = DiscussState.PRESENTATION
+        runner.session.presentation_index = 2
+        runner._restored_state_data = {"current_concept_index": 5}
+
+        mock_engine = MagicMock()
+        mock_engine.run = AsyncMock(return_value=PresentationResult(completed=True))
+        mock_engine_cls.return_value = mock_engine
+
+        await runner._handle_presentation()
+
+        mock_engine.run.assert_called_once_with(start_index=5)
+
+    @patch("neev_voice.discuss.runner.PresentationEngine")
+    async def test_presentation_passes_on_concept_done(
+        self,
+        mock_engine_cls: MagicMock,
+        runner: DiscussRunner,
+    ) -> None:
+        """PresentationEngine is created with on_concept_done callback."""
+        runner.session.state = DiscussState.PRESENTATION
+
+        mock_engine = MagicMock()
+        mock_engine.run = AsyncMock(return_value=PresentationResult(completed=True))
+        mock_engine_cls.return_value = mock_engine
+
+        await runner._handle_presentation()
+
+        # Verify on_concept_done was passed to engine constructor
+        call_kwargs = mock_engine_cls.call_args[1]
+        assert "on_concept_done" in call_kwargs
+        assert callable(call_kwargs["on_concept_done"])
+
+    def test_on_concept_done_persists_progress(
+        self,
+        runner: DiscussRunner,
+        session_manager: SessionManager,
+    ) -> None:
+        """_on_concept_done updates session index and saves."""
+        runner._on_concept_done(3)
+
+        assert runner.session.presentation_index == 4
+
+        # Verify persisted
+        loaded = session_manager.load_session("test-runner")
+        assert loaded is not None
+        assert loaded.presentation_index == 4
 
 
 class TestHandleEnquiry:

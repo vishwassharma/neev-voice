@@ -162,10 +162,10 @@ class PrepareEngine:
     async def run(self) -> list[ConceptInfo]:
         """Run the full prepare phase.
 
-        1. Check for existing output (resume support)
+        1. Check for existing concepts.json (skip Phase 1 if present)
         2. Scan research_path for documents
         3. Analyze each document for concepts
-        4. Generate tutorials, explainers, transcripts
+        4. Generate tutorials, explainers, transcripts (skip existing)
         5. Save concepts.json and output files
 
         Returns:
@@ -173,45 +173,53 @@ class PrepareEngine:
         """
         logger.info("prepare_engine_started", session=self.session.name)
 
-        # Check for existing concepts (resume support)
-        existing = self._load_existing_concepts()
-        if existing:
-            logger.info("prepare_engine_resuming", existing_concepts=len(existing))
-            return existing
-
         # Setup output directories
         self._ensure_dirs()
 
-        # Find input documents
-        docs = self._find_documents()
-        if not docs:
-            logger.warning("prepare_engine_no_documents", path=self.session.research_path)
-            return []
+        # Check for existing concepts (Phase 1 resume)
+        all_concepts = self._load_existing_concepts()
+        if all_concepts:
+            logger.info("prepare_phase1_complete", existing_concepts=len(all_concepts))
+        else:
+            # Phase 1: Extract concepts from all documents
+            docs = self._find_documents()
+            if not docs:
+                logger.warning("prepare_engine_no_documents", path=self.session.research_path)
+                return []
 
-        logger.info("prepare_engine_found_documents", count=len(docs))
+            logger.info("prepare_engine_found_documents", count=len(docs))
 
-        # Phase 1: Extract concepts from all documents
-        all_concepts: list[ConceptInfo] = []
-        for doc in docs:
-            concepts = await self._extract_concepts(doc)
-            # Re-index concepts to be globally sequential
-            offset = len(all_concepts)
-            for c in concepts:
-                c.index = offset + c.index
-                c.dependencies = [d + offset for d in c.dependencies]
-            all_concepts.extend(concepts)
+            all_concepts = []
+            for doc in docs:
+                concepts = await self._extract_concepts(doc)
+                # Re-index concepts to be globally sequential
+                offset = len(all_concepts)
+                for c in concepts:
+                    c.index = offset + c.index
+                    c.dependencies = [d + offset for d in c.dependencies]
+                all_concepts.extend(concepts)
 
-        if not all_concepts:
-            logger.warning("prepare_engine_no_concepts_extracted")
-            return []
+            if not all_concepts:
+                logger.warning("prepare_engine_no_concepts_extracted")
+                return []
 
-        # Save concept index
-        self._save_concepts(all_concepts)
+            # Save concept index
+            self._save_concepts(all_concepts)
 
-        # Phase 2: Generate content for each concept
-        for concept in all_concepts:
-            previous = [c.title for c in all_concepts[: concept.index]]
-            await self._generate_content(concept, previous)
+        # Phase 2: Generate content for each concept (skip existing)
+        pending = [c for c in all_concepts if not self._concept_content_exists(c.index)]
+        if pending:
+            logger.info(
+                "prepare_phase2_progress",
+                total=len(all_concepts),
+                pending=len(pending),
+                skipped=len(all_concepts) - len(pending),
+            )
+            for concept in pending:
+                previous = [c.title for c in all_concepts[: concept.index]]
+                await self._generate_content(concept, previous)
+        else:
+            logger.info("prepare_phase2_complete", total=len(all_concepts))
 
         logger.info(
             "prepare_engine_complete",
@@ -255,6 +263,28 @@ class PrepareEngine:
             return [ConceptInfo.from_dict(c) for c in data]
         except (json.JSONDecodeError, KeyError, TypeError):
             return None
+
+    def _concept_content_exists(self, concept_index: int) -> bool:
+        """Check if all content artifacts exist for a concept.
+
+        Checks for the presence of tutorial, explainer, and transcript
+        files matching the concept index prefix.
+
+        Args:
+            concept_index: Zero-based concept index.
+
+        Returns:
+            True if all three content files exist.
+        """
+        prefix = f"{concept_index:03d}_"
+        for subdir in ("tutorials", "explainers", "transcripts"):
+            dir_path = self.prepare_dir / subdir
+            if not dir_path.exists():
+                return False
+            matches = [f for f in dir_path.iterdir() if f.name.startswith(prefix) and f.is_file()]
+            if not matches:
+                return False
+        return True
 
     def _save_concepts(self, concepts: list[ConceptInfo]) -> None:
         """Save the concept index to concepts.json.

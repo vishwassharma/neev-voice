@@ -633,6 +633,139 @@ class TestListenWithMode:
         plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
         assert "--files" in plain
 
+    def test_discuss_help_shows_standalone_flags(self):
+        """Test discuss --help mentions standalone action flags."""
+        result = runner.invoke(app, ["discuss", "--help"])
+        assert result.exit_code == 0
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--list-sessions" in plain
+        assert "--export" in plain
+        assert "--import" in plain
+
+
+class TestDiscussStandaloneActions:
+    """Tests for discuss standalone actions (--list-sessions, --export, --import)."""
+
+    def test_list_sessions_empty(self, mocker, tmp_path):
+        """--list-sessions shows message when no sessions exist."""
+        settings = MagicMock()
+        settings.discuss_base_dir = str(tmp_path / "discuss")
+        mocker.patch("neev_voice.cli._get_settings", return_value=settings)
+
+        result = runner.invoke(app, ["discuss", "--list-sessions"])
+        assert result.exit_code == 0
+        assert "No sessions" in result.output
+
+    def test_list_sessions_with_sessions(self, mocker, tmp_path):
+        """--list-sessions shows table with session info."""
+        from neev_voice.discuss.session import SessionManager
+        from neev_voice.discuss.state import DiscussState
+
+        base_dir = tmp_path / "discuss"
+        mgr = SessionManager(base_dir=base_dir)
+        session = mgr.create_session("test-alpha", research_path="/r", source_path="/s")
+        session.state = DiscussState.PRESENTATION
+        session.concepts = [{"title": "C1"}]
+        mgr.save_session(session)
+
+        settings = MagicMock()
+        settings.discuss_base_dir = str(base_dir)
+        mocker.patch("neev_voice.cli._get_settings", return_value=settings)
+
+        result = runner.invoke(app, ["discuss", "--list-sessions"])
+        assert result.exit_code == 0
+        assert "test-alpha" in result.output
+
+    def test_export_session(self, mocker, tmp_path):
+        """--export creates a zip file."""
+        from neev_voice.discuss.session import SessionManager
+
+        base_dir = tmp_path / "discuss"
+        mgr = SessionManager(base_dir=base_dir)
+        research = tmp_path / "research"
+        research.mkdir()
+        (research / "doc.md").write_text("content")
+        mgr.create_session("export-test", research_path=str(research), source_path="/s")
+
+        settings = MagicMock()
+        settings.discuss_base_dir = str(base_dir)
+        mocker.patch("neev_voice.cli._get_settings", return_value=settings)
+
+        result = runner.invoke(
+            app, ["discuss", "--export", "export-test", "--output", str(tmp_path)]
+        )
+        assert result.exit_code == 0
+        assert "Exported" in result.output
+        assert (tmp_path / "export-test.zip").exists()
+
+    def test_export_nonexistent_session(self, mocker, tmp_path):
+        """--export with missing session shows error."""
+        settings = MagicMock()
+        settings.discuss_base_dir = str(tmp_path / "discuss")
+        mocker.patch("neev_voice.cli._get_settings", return_value=settings)
+
+        result = runner.invoke(app, ["discuss", "--export", "ghost"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_import_session(self, mocker, tmp_path):
+        """--import recreates a session from zip."""
+        from neev_voice.discuss.session import SessionManager
+
+        base_dir = tmp_path / "discuss"
+        mgr = SessionManager(base_dir=base_dir)
+        research = tmp_path / "research"
+        research.mkdir()
+        (research / "doc.md").write_text("content")
+        mgr.create_session("import-test", research_path=str(research), source_path="/s")
+
+        # Export first
+        from neev_voice.discuss.portability import export_session
+
+        zip_path = export_session(mgr, "import-test", output_path=tmp_path / "exports")
+        mgr.delete_session("import-test")
+
+        settings = MagicMock()
+        settings.discuss_base_dir = str(base_dir)
+        mocker.patch("neev_voice.cli._get_settings", return_value=settings)
+
+        result = runner.invoke(app, ["discuss", "--import", str(zip_path)])
+        assert result.exit_code == 0
+        assert "Imported" in result.output
+        assert "import-test" in result.output
+
+    def test_import_nonexistent_zip(self, mocker, tmp_path):
+        """--import with missing zip shows error."""
+        settings = MagicMock()
+        settings.discuss_base_dir = str(tmp_path / "discuss")
+        mocker.patch("neev_voice.cli._get_settings", return_value=settings)
+
+        result = runner.invoke(app, ["discuss", "--import", "/nonexistent.zip"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_import_duplicate_session(self, mocker, tmp_path):
+        """--import with existing session shows error."""
+        from neev_voice.discuss.portability import export_session
+        from neev_voice.discuss.session import SessionManager
+
+        base_dir = tmp_path / "discuss"
+        mgr = SessionManager(base_dir=base_dir)
+        research = tmp_path / "research"
+        research.mkdir()
+        (research / "doc.md").write_text("content")
+        mgr.create_session("dup-test", research_path=str(research), source_path="/s")
+        zip_path = export_session(mgr, "dup-test", output_path=tmp_path / "exports")
+
+        settings = MagicMock()
+        settings.discuss_base_dir = str(base_dir)
+        mocker.patch("neev_voice.cli._get_settings", return_value=settings)
+
+        # Session still exists — import should fail
+        result = runner.invoke(app, ["discuss", "--import", str(zip_path)])
+        assert result.exit_code == 1
+        assert "already exists" in result.output
+
 
 class TestBuildDiscussionResultMd:
     """Tests for _build_discussion_result_md helper."""
