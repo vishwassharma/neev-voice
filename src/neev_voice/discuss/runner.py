@@ -95,6 +95,14 @@ class DiscussRunner:
             initial_state=self.session.state,
         )
 
+        # Restore last answer from history for resume support
+        if self._current_answer is None:
+            entries = self.history.load()
+            for entry in reversed(entries):
+                if entry.get("type") == "answer":
+                    self._current_answer = entry["content"]
+                    break
+
         while True:
             state = self.session.state
             logger.info("discuss_runner_state", state=state)
@@ -247,7 +255,12 @@ class DiscussRunner:
             if self.session.concepts:
                 self._transition(DiscussState.PRESENTATION)
                 return True
-            # Enquiry-only mode (no concepts) — exit
+            # Enquiry-only mode — if there's a previous answer, go back to it
+            if self._current_answer:
+                self.session.state = DiscussState.PRESENTATION_ENQUIRY
+                self.session_manager.save_session(self.session)
+                return True
+            # No answer history — exit
             return False
 
         if result.query:
