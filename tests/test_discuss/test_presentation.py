@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -136,6 +136,154 @@ class TestPresentationEngine:
         assert engine.load_transcript(0) is None
 
 
+class TestWaitForStart:
+    """Tests for _wait_for_start() ENTER gate method."""
+
+    @patch("neev_voice.audio.keyboard.KeyboardMonitor")
+    @patch("rich.console.Console")
+    async def test_enter_pressed_returns_none(
+        self,
+        mock_console_cls: MagicMock,
+        mock_monitor_cls: MagicMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """ENTER press returns None (proceed to playback)."""
+        mock_monitor = MagicMock()
+        mock_monitor.done_event.is_set.return_value = True
+        mock_monitor.interrupted_event.is_set.return_value = False
+        mock_monitor.cancelled_event.is_set.return_value = False
+        mock_monitor_cls.return_value = mock_monitor
+
+        engine = PresentationEngine(session, settings, prepare_dir=prepare_dir)
+        result = await engine._wait_for_start(0, 3)
+
+        assert result is None
+        mock_monitor.start.assert_called_once()
+        mock_monitor.stop.assert_called_once()
+
+    @patch("neev_voice.audio.keyboard.KeyboardMonitor")
+    @patch("rich.console.Console")
+    async def test_space_pressed_returns_interrupted(
+        self,
+        mock_console_cls: MagicMock,
+        mock_monitor_cls: MagicMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """SPACE press returns interrupted with correct state_data."""
+        mock_monitor = MagicMock()
+        mock_monitor.done_event.is_set.return_value = False
+        mock_monitor.interrupted_event.is_set.return_value = True
+        mock_monitor.cancelled_event.is_set.return_value = False
+        mock_monitor_cls.return_value = mock_monitor
+
+        engine = PresentationEngine(session, settings, prepare_dir=prepare_dir)
+        result = await engine._wait_for_start(2, 5)
+
+        assert result is not None
+        assert result.interrupted is True
+        assert result.state_data["current_concept_index"] == 2
+        assert result.state_data["total_concepts"] == 5
+
+    @patch("neev_voice.audio.keyboard.KeyboardMonitor")
+    @patch("rich.console.Console")
+    async def test_esc_pressed_returns_cancelled(
+        self,
+        mock_console_cls: MagicMock,
+        mock_monitor_cls: MagicMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """ESC press returns cancelled."""
+        mock_monitor = MagicMock()
+        mock_monitor.done_event.is_set.return_value = False
+        mock_monitor.interrupted_event.is_set.return_value = False
+        mock_monitor.cancelled_event.is_set.return_value = True
+        mock_monitor_cls.return_value = mock_monitor
+
+        engine = PresentationEngine(session, settings, prepare_dir=prepare_dir)
+        result = await engine._wait_for_start(0, 1)
+
+        assert result is not None
+        assert result.cancelled is True
+
+    @patch("neev_voice.audio.keyboard.KeyboardMonitor")
+    @patch("rich.console.Console")
+    async def test_monitor_stopped_on_exception(
+        self,
+        mock_console_cls: MagicMock,
+        mock_monitor_cls: MagicMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """Monitor is stopped even if an exception occurs."""
+        mock_monitor = MagicMock()
+        mock_monitor.done_event.is_set.side_effect = RuntimeError("test error")
+        mock_monitor_cls.return_value = mock_monitor
+
+        engine = PresentationEngine(session, settings, prepare_dir=prepare_dir)
+
+        with pytest.raises(RuntimeError, match="test error"):
+            await engine._wait_for_start(0, 1)
+
+        mock_monitor.stop.assert_called_once()
+
+    @patch("neev_voice.audio.keyboard.KeyboardMonitor")
+    @patch("rich.console.Console")
+    async def test_console_displays_prompt(
+        self,
+        mock_console_cls: MagicMock,
+        mock_monitor_cls: MagicMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """Console prints the key instructions prompt."""
+        mock_console = MagicMock()
+        mock_console_cls.return_value = mock_console
+
+        mock_monitor = MagicMock()
+        mock_monitor.done_event.is_set.return_value = True
+        mock_monitor_cls.return_value = mock_monitor
+
+        engine = PresentationEngine(session, settings, prepare_dir=prepare_dir)
+        await engine._wait_for_start(1, 3)
+
+        mock_console.print.assert_called_once()
+        call_args = mock_console.print.call_args[0][0]
+        assert "2/3" in call_args
+        assert "ENTER" in call_args
+        assert "SPACE" in call_args
+        assert "ESC" in call_args
+
+    @patch("neev_voice.audio.keyboard.KeyboardMonitor")
+    @patch("rich.console.Console")
+    async def test_uses_presentation_mode(
+        self,
+        mock_console_cls: MagicMock,
+        mock_monitor_cls: MagicMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """KeyboardMonitor is created with PRESENTATION mode."""
+        from neev_voice.audio.keyboard import MonitorMode
+
+        mock_monitor = MagicMock()
+        mock_monitor.done_event.is_set.return_value = True
+        mock_monitor_cls.return_value = mock_monitor
+
+        engine = PresentationEngine(session, settings, prepare_dir=prepare_dir)
+        await engine._wait_for_start(0, 1)
+
+        mock_monitor_cls.assert_called_once_with(mode=MonitorMode.PRESENTATION)
+
+
 class TestPresentationEngineRun:
     """Tests for run() and run_answer() methods."""
 
@@ -147,26 +295,34 @@ class TestPresentationEngineRun:
         result = await engine.run()
         assert result.completed
 
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock, return_value=None)
     async def test_run_no_tts_provider(
-        self, session: SessionInfo, settings: MagicMock, prepare_dir: Path
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
     ) -> None:
         """run() handles missing TTS provider gracefully."""
         engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
-        # Without TTS, _present_single returns completed=False (no audio)
-        # but loop continues through all concepts
         result = await engine.run()
-        # Should complete after iterating through all concepts
         assert result.completed
+        # Gate called once per concept with a transcript (3 concepts)
+        assert mock_wait.call_count == 3
 
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock, return_value=None)
     async def test_run_tts_error(
-        self, session: SessionInfo, settings: MagicMock, prepare_dir: Path
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
     ) -> None:
         """run() handles TTS synthesis errors."""
         tts = AsyncMock()
         tts.synthesize = AsyncMock(side_effect=RuntimeError("TTS failed"))
 
         engine = PresentationEngine(session, settings, tts_provider=tts, prepare_dir=prepare_dir)
-        # TTS error returns completed=True for the segment, loop continues
         result = await engine.run()
         assert result.completed
 
@@ -178,20 +334,30 @@ class TestPresentationEngineRun:
         result = await engine.run_answer("")
         assert result.completed
 
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock, return_value=None)
     async def test_run_with_start_index(
-        self, session: SessionInfo, settings: MagicMock, prepare_dir: Path
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
     ) -> None:
         """run() respects start_index parameter."""
         engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
-        # Start from index 2 (last concept)
         result = await engine.run(start_index=2)
         assert result.completed
+        # Only last concept, so gate called once
+        mock_wait.assert_called_once_with(2, 3)
 
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock, return_value=None)
     async def test_run_missing_transcript_skipped(
-        self, session: SessionInfo, settings: MagicMock, prepare_dir: Path
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
     ) -> None:
         """run() skips concepts with missing transcripts."""
-        # Delete one transcript
         for f in (prepare_dir / "transcripts").iterdir():
             if f.name.startswith("001_"):
                 f.unlink()
@@ -199,3 +365,117 @@ class TestPresentationEngineRun:
         engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
         result = await engine.run()
         assert result.completed
+        # Gate called for concepts 0 and 2 (concept 1 has no transcript, skipped before gate)
+        assert mock_wait.call_count == 2
+
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock)
+    async def test_run_gate_interrupted_at_first_concept(
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """SPACE during wait gate returns interrupted without starting TTS."""
+        mock_wait.return_value = PresentationResult(
+            interrupted=True,
+            state_data={"current_concept_index": 0, "total_concepts": 3},
+        )
+
+        engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
+        result = await engine.run()
+
+        assert result.interrupted
+        assert result.state_data["current_concept_index"] == 0
+        mock_wait.assert_called_once_with(0, 3)
+
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock)
+    async def test_run_gate_cancelled(
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """ESC during wait gate returns cancelled."""
+        mock_wait.return_value = PresentationResult(cancelled=True)
+
+        engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
+        result = await engine.run()
+
+        assert result.cancelled
+
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock)
+    async def test_run_gate_interrupted_at_second_concept(
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """SPACE during second concept gate returns interrupted with correct index."""
+        mock_wait.side_effect = [
+            None,  # First concept: ENTER pressed, proceed
+            PresentationResult(
+                interrupted=True,
+                state_data={"current_concept_index": 1, "total_concepts": 3},
+            ),
+        ]
+
+        engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
+        result = await engine.run()
+
+        assert result.interrupted
+        assert result.state_data["current_concept_index"] == 1
+        assert mock_wait.call_count == 2
+
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock, return_value=None)
+    async def test_run_answer_gate_called(
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """run_answer() calls the ENTER gate before presenting."""
+        engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
+        result = await engine.run_answer("Some answer text")
+
+        mock_wait.assert_called_once_with(0, 1)
+        # No TTS provider, so no audio played
+        assert not result.completed
+
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock)
+    async def test_run_answer_gate_interrupted(
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """SPACE during run_answer gate returns interrupted."""
+        mock_wait.return_value = PresentationResult(
+            interrupted=True,
+            state_data={"current_concept_index": 0, "total_concepts": 1},
+        )
+
+        engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
+        result = await engine.run_answer("Some answer text")
+
+        assert result.interrupted
+
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock)
+    async def test_run_answer_gate_cancelled(
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """ESC during run_answer gate returns cancelled."""
+        mock_wait.return_value = PresentationResult(cancelled=True)
+
+        engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
+        result = await engine.run_answer("Some answer text")
+
+        assert result.cancelled

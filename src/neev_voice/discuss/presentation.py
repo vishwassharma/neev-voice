@@ -1,8 +1,9 @@
 """Presentation engine for the discuss state machine.
 
 Handles TTS synthesis and playback of concepts with interruptible
-playback support. Monitors keyboard for spacebar (interrupt to enquiry),
-ENTER (next concept), and ESC (cancel).
+playback support. Waits for ENTER before each concept's TTS playback.
+Monitors keyboard for spacebar (interrupt to enquiry),
+ENTER (start/next concept), and ESC (cancel).
 """
 
 from __future__ import annotations
@@ -45,8 +46,8 @@ class PresentationEngine:
     """Presents concepts via TTS with interruptible playback.
 
     Loads TTS-ready transcripts and presents them one concept at a time.
-    Supports interruption (spacebar → enquiry), skip (ENTER → next),
-    and cancellation (ESC → exit).
+    Waits for ENTER before starting TTS for each concept.
+    Supports interruption (spacebar → enquiry) and cancellation (ESC → exit).
 
     Attributes:
         session: Current discuss session info.
@@ -116,11 +117,11 @@ class PresentationEngine:
         """Present concepts sequentially with interruptible TTS playback.
 
         For each concept starting from start_index:
-        1. Load the TTS-ready transcript
-        2. Synthesize audio via TTS provider
-        3. Play audio with keyboard monitoring
-        4. On SPACEBAR: interrupt, return state for stack push
-        5. On ENTER: skip to next concept
+        1. Wait for ENTER before starting TTS
+        2. Load the TTS-ready transcript
+        3. Synthesize audio via TTS provider
+        4. Play audio with keyboard monitoring
+        5. On SPACEBAR (during wait or playback): interrupt → enquiry
         6. On ESC: cancel
 
         Args:
@@ -155,6 +156,11 @@ class PresentationEngine:
                 title=concept.get("title", f"Concept {idx}"),
             )
 
+            # Wait for user to press ENTER before starting TTS
+            gate_result = await self._wait_for_start(idx, total)
+            if gate_result is not None:
+                return gate_result
+
             result = await self._present_single(transcript, idx, total)
 
             if result.interrupted:
@@ -167,7 +173,7 @@ class PresentationEngine:
             if result.cancelled:
                 return result
 
-            # ENTER or playback complete — continue to next concept
+            # Playback complete — continue to next concept
 
         return PresentationResult(completed=True)
 
@@ -176,6 +182,7 @@ class PresentationEngine:
 
         Similar to run() but presents a single piece of text (the
         answer to a user's enquiry) rather than concept transcripts.
+        Waits for ENTER before starting TTS playback.
 
         Args:
             answer_text: The answer text to present.
@@ -186,7 +193,67 @@ class PresentationEngine:
         if not answer_text:
             return PresentationResult(completed=True)
 
+        # Wait for user to press ENTER before speaking the answer
+        gate_result = await self._wait_for_start(0, 1)
+        if gate_result is not None:
+            return gate_result
+
         return await self._present_single(answer_text, 0, 1)
+
+    async def _wait_for_start(self, concept_index: int, total: int) -> PresentationResult | None:
+        """Wait for user to press ENTER before starting TTS playback.
+
+        Monitors keyboard for ENTER (proceed), SPACE (interrupt to enquiry),
+        or ESC (cancel). Blocks until one of these keys is pressed.
+
+        Args:
+            concept_index: Current concept index (for state_data on interrupt).
+            total: Total number of concepts.
+
+        Returns:
+            None if ENTER pressed (proceed to playback).
+            PresentationResult if SPACE (interrupted) or ESC (cancelled).
+        """
+        import asyncio
+
+        from rich.console import Console
+
+        from neev_voice.audio.keyboard import KeyboardMonitor, MonitorMode
+
+        console = Console()
+        console.print(
+            f"\n[dim]Concept {concept_index + 1}/{total}[/dim]  "
+            "[bold green]ENTER[/bold green] to start  "
+            "[bold yellow]SPACE[/bold yellow] to ask  "
+            "[bold red]ESC[/bold red] to quit",
+        )
+
+        logger.info(
+            "presentation_waiting_for_start",
+            index=concept_index,
+            total=total,
+        )
+
+        monitor = KeyboardMonitor(mode=MonitorMode.PRESENTATION)
+        monitor.start()
+
+        try:
+            while True:
+                if monitor.done_event.is_set():
+                    return None
+                if monitor.interrupted_event.is_set():
+                    return PresentationResult(
+                        interrupted=True,
+                        state_data={
+                            "current_concept_index": concept_index,
+                            "total_concepts": total,
+                        },
+                    )
+                if monitor.cancelled_event.is_set():
+                    return PresentationResult(cancelled=True)
+                await asyncio.sleep(0.05)
+        finally:
+            monitor.stop()
 
     async def _present_single(self, text: str, index: int, total: int) -> PresentationResult:
         """Present a single piece of text via TTS with keyboard monitoring.
