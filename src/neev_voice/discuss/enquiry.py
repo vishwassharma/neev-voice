@@ -194,20 +194,31 @@ class EnquiryEngine:
         shutil.copy2(str(wav_path), str(audio_dest))
         wav_path.unlink(missing_ok=True)
 
-        # Open editor for transcript review/correction
-        edited = click.edit(text=transcription.text, extension=".txt")
+        # Review transcript: accept / edit / reject
+        from neev_voice.exceptions import TranscriptRejectedError
+        from neev_voice.review import TranscriptReviewer
 
-        if edited is None or not edited.strip():
-            # User quit editor without saving — cleanup and reset
-            logger.info("voice_enquiry_editor_cancelled")
+        transcript_path = enquiry_dir / "transcript.txt"
+        transcript_path.write_text(transcription.text, encoding="utf-8")
+        reviewer = TranscriptReviewer(console=Console())
+
+        try:
+            action, query = await reviewer.review(transcription.text, transcript_path)
+        except TranscriptRejectedError:
+            logger.info("voice_enquiry_rejected")
             self._cleanup_enquiry_dir(enquiry_dir)
             return EnquiryResult(escaped=False, source="voice")
 
-        query = edited.strip()
+        if not query.strip():
+            logger.info("voice_enquiry_empty_after_review")
+            self._cleanup_enquiry_dir(enquiry_dir)
+            return EnquiryResult(escaped=False, source="voice")
 
-        # Save query text
+        query = query.strip()
+
+        # Save final query text
         (enquiry_dir / "query.txt").write_text(query, encoding="utf-8")
-        logger.info("voice_enquiry_captured", query_length=len(query))
+        logger.info("voice_enquiry_captured", query_length=len(query), action=action)
 
         return EnquiryResult(
             escaped=False,

@@ -233,17 +233,19 @@ class TestEnquiryEngineVoice:
         assert result.query == "Manual fallback"
         assert result.source == "manual"
 
-    @patch("neev_voice.discuss.enquiry.click.edit")
+    @patch("neev_voice.review.TranscriptReviewer")
     @patch("neev_voice.discuss.enquiry.AudioRecorder")
-    async def test_handle_voice_editor_cancelled(
+    async def test_handle_voice_rejected(
         self,
         mock_recorder_cls: MagicMock,
-        mock_edit: MagicMock,
+        mock_reviewer_cls: MagicMock,
         session: SessionInfo,
         settings: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """_handle_voice cleans up when editor is cancelled."""
+        """_handle_voice cleans up when transcript is rejected."""
+        from neev_voice.exceptions import TranscriptRejectedError
+
         mock_segment = MagicMock()
         mock_recorder = MagicMock()
         mock_recorder.record_push_to_talk = AsyncMock(return_value=mock_segment)
@@ -254,7 +256,9 @@ class TestEnquiryEngineVoice:
         stt = AsyncMock()
         stt.transcribe = AsyncMock(return_value=MagicMock(text="transcribed text"))
 
-        mock_edit.return_value = None  # Editor cancelled
+        mock_reviewer = MagicMock()
+        mock_reviewer.review = AsyncMock(side_effect=TranscriptRejectedError("rejected"))
+        mock_reviewer_cls.return_value = mock_reviewer
 
         engine = EnquiryEngine(session, settings, stt_provider=stt, session_dir=tmp_path)
         result = await engine._handle_voice()
@@ -262,17 +266,19 @@ class TestEnquiryEngineVoice:
         assert result.query is None
         assert result.source == "voice"
 
-    @patch("neev_voice.discuss.enquiry.click.edit")
+    @patch("neev_voice.review.TranscriptReviewer")
     @patch("neev_voice.discuss.enquiry.AudioRecorder")
     async def test_handle_voice_success(
         self,
         mock_recorder_cls: MagicMock,
-        mock_edit: MagicMock,
+        mock_reviewer_cls: MagicMock,
         session: SessionInfo,
         settings: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """_handle_voice returns query on success."""
+        """_handle_voice returns query on accept."""
+        from neev_voice.review import TranscriptReviewAction
+
         mock_segment = MagicMock()
         mock_recorder = MagicMock()
         mock_recorder.record_push_to_talk = AsyncMock(return_value=mock_segment)
@@ -285,7 +291,11 @@ class TestEnquiryEngineVoice:
         stt = AsyncMock()
         stt.transcribe = AsyncMock(return_value=MagicMock(text="what is this concept"))
 
-        mock_edit.return_value = "What is this concept?"
+        mock_reviewer = MagicMock()
+        mock_reviewer.review = AsyncMock(
+            return_value=(TranscriptReviewAction.ACCEPT, "What is this concept?")
+        )
+        mock_reviewer_cls.return_value = mock_reviewer
 
         engine = EnquiryEngine(session, settings, stt_provider=stt, session_dir=tmp_path)
         result = await engine._handle_voice()
