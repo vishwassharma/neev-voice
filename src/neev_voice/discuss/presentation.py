@@ -164,7 +164,12 @@ class PresentationEngine:
             )
 
             # Wait for user to press ENTER before starting TTS
-            gate_result = await self._wait_for_start(idx, total)
+            gate_result = await self._wait_for_start(
+                idx,
+                total,
+                title=concept.get("title", f"Concept {idx}"),
+                description=concept.get("description", ""),
+            )
             if gate_result is not None:
                 return gate_result
 
@@ -206,15 +211,24 @@ class PresentationEngine:
         # (answer text is shown by the TUI before this is called)
         return await self._present_single(answer_text, 0, 1)
 
-    async def _wait_for_start(self, concept_index: int, total: int) -> PresentationResult | None:
+    async def _wait_for_start(
+        self,
+        concept_index: int,
+        total: int,
+        title: str = "",
+        description: str = "",
+    ) -> PresentationResult | None:
         """Wait for user to press ENTER before starting TTS playback.
 
+        Shows a Rich panel with concept info and key instructions.
         Monitors keyboard for ENTER (proceed), SPACE (interrupt to enquiry),
-        or ESC (cancel). Blocks until one of these keys is pressed.
+        or ESC (cancel).
 
         Args:
             concept_index: Current concept index (for state_data on interrupt).
             total: Total number of concepts.
+            title: Concept title for display.
+            description: Concept description for display.
 
         Returns:
             None if ENTER pressed (proceed to playback).
@@ -225,13 +239,17 @@ class PresentationEngine:
         from rich.console import Console
 
         from neev_voice.audio.keyboard import KeyboardMonitor, MonitorMode
+        from neev_voice.discuss.tui import make_presentation_panel
 
         console = Console()
         console.print(
-            f"\n[dim]Concept {concept_index + 1}/{total}[/dim]  "
-            "[bold green]ENTER[/bold green] to start  "
-            "[bold yellow]SPACE[/bold yellow] to ask  "
-            "[bold red]ESC[/bold red] to quit",
+            make_presentation_panel(
+                title=title,
+                description=description,
+                index=concept_index,
+                total=total,
+                playing=False,
+            )
         )
 
         logger.info(

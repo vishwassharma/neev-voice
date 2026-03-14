@@ -261,14 +261,15 @@ class TestWaitForStart:
         mock_monitor_cls.return_value = mock_monitor
 
         engine = PresentationEngine(session, settings, prepare_dir=prepare_dir)
-        await engine._wait_for_start(1, 3)
+        await engine._wait_for_start(1, 3, title="Test", description="Desc")
 
         mock_console.print.assert_called_once()
-        call_args = mock_console.print.call_args[0][0]
-        assert "2/3" in call_args
-        assert "ENTER" in call_args
-        assert "SPACE" in call_args
-        assert "ESC" in call_args
+        panel = mock_console.print.call_args[0][0]
+        assert "2/3" in panel.title
+        text = panel.renderable.plain
+        assert "ENTER" in text
+        assert "SPACE" in text
+        assert "ESC" in text
 
     @patch("neev_voice.audio.keyboard.KeyboardMonitor")
     @patch("rich.console.Console")
@@ -356,7 +357,12 @@ class TestPresentationEngineRun:
         result = await engine.run(start_index=2)
         assert result.completed
         # Only last concept, so gate called once
-        mock_wait.assert_called_once_with(2, 3)
+        mock_wait.assert_called_once_with(
+            2,
+            3,
+            title="Concept C",
+            description="Third concept",
+        )
 
     @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock, return_value=None)
     async def test_run_missing_transcript_skipped(
@@ -396,7 +402,12 @@ class TestPresentationEngineRun:
 
         assert result.interrupted
         assert result.state_data["current_concept_index"] == 0
-        mock_wait.assert_called_once_with(0, 3)
+        mock_wait.assert_called_once_with(
+            0,
+            3,
+            title="Concept A",
+            description="First concept",
+        )
 
     @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock)
     async def test_run_gate_cancelled(

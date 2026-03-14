@@ -101,6 +101,8 @@ class DiscussRunner:
                 ctx: dict = {}
                 if state == DiscussState.PRESENTATION_ENQUIRY and self._current_answer:
                     ctx["answer"] = self._current_answer
+                if state == DiscussState.PREPARE_ENQUIRY and self._current_enquiry:
+                    ctx["query"] = self._current_enquiry.query or ""
                 self.on_state_enter(state, ctx)
 
             match state:

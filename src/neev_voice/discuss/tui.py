@@ -6,7 +6,7 @@ for consistent visual feedback across all discuss states.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.console import Console
 from rich.panel import Panel
@@ -247,6 +247,7 @@ class DiscussTUI:
         self.runner = runner
         self.console = console or Console()
         self.runner.on_state_enter = self._on_state_enter
+        self._active_status: Any | None = None
 
     async def run(self) -> None:
         """Run the discuss session with TUI display.
@@ -255,19 +256,48 @@ class DiscussTUI:
         session, and prints a goodbye message on exit.
         """
         self._print_header()
-        await self.runner.run()
+        try:
+            await self.runner.run()
+        finally:
+            self._stop_spinner()
         self._print_footer()
+
+    _SPINNER_STATES: ClassVar[dict[DiscussState, str]] = {
+        DiscussState.PREPARE: "Analyzing documents and extracting concepts...",
+        DiscussState.PREPARE_ENQUIRY: "Researching answer...",
+    }
+    """States that show a spinner during engine execution."""
+
+    def _stop_spinner(self) -> None:
+        """Stop any active spinner from a previous state."""
+        if self._active_status is not None:
+            self._active_status.stop()
+            self._active_status = None
 
     def _on_state_enter(self, state: DiscussState, ctx: dict) -> None:
         """Callback fired at the start of each state machine iteration.
 
-        Renders the appropriate panel for the current state. For
-        PRESENTATION_ENQUIRY, displays the answer text immediately.
+        Shows spinners for long-running states, answer text for
+        PRESENTATION_ENQUIRY, and static panels for others.
 
         Args:
             state: The state being entered.
             ctx: Context dict with state-specific data (e.g. answer text).
         """
+        self._stop_spinner()
+
+        # Spinner states (prepare, prepare-enquiry)
+        spinner_msg = self._SPINNER_STATES.get(state)
+        if spinner_msg:
+            if state == DiscussState.PREPARE_ENQUIRY:
+                query = ctx.get("query", "")
+                if query:
+                    truncated = query[:80] + ("..." if len(query) > 80 else "")
+                    self.console.print(f"\n[bold]Q:[/bold] [italic]{truncated}[/italic]")
+            self._active_status = self.console.status(spinner_msg, spinner="dots")
+            self._active_status.start()
+            return
+
         if state == DiscussState.PRESENTATION_ENQUIRY:
             answer = ctx.get("answer", "")
             if answer:
@@ -278,9 +308,9 @@ class DiscussTUI:
             # Presentation panel is rendered by the engine's _wait_for_start
             return
 
-        panel_fn = _STATE_PANELS.get(state)
-        if panel_fn:
-            self.console.print(panel_fn())
+        if state == DiscussState.ENQUIRY:
+            self.console.print(make_enquiry_panel())
+            return
 
     def _print_header(self) -> None:
         """Print session header with name and initial state."""

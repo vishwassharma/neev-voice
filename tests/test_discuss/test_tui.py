@@ -251,12 +251,14 @@ class TestDiscussTUI:
         await tui.run()
         runner.run.assert_called_once()
 
-    def test_on_state_enter_prepare(self, tmp_path: Path) -> None:
-        """Prepare state renders prepare panel."""
+    def test_on_state_enter_prepare_starts_spinner(self, tmp_path: Path) -> None:
+        """Prepare state starts a spinner."""
         runner = self._make_runner(tmp_path)
         console = Console(file=open("/dev/null", "w"))  # noqa: SIM115
         tui = DiscussTUI(runner, console=console)
         tui._on_state_enter(DiscussState.PREPARE, {})
+        assert tui._active_status is not None
+        tui._stop_spinner()
 
     def test_on_state_enter_enquiry(self, tmp_path: Path) -> None:
         """Enquiry state renders enquiry panel."""
@@ -265,12 +267,14 @@ class TestDiscussTUI:
         tui = DiscussTUI(runner, console=console)
         tui._on_state_enter(DiscussState.ENQUIRY, {})
 
-    def test_on_state_enter_prepare_enquiry(self, tmp_path: Path) -> None:
-        """Prepare-enquiry state renders research panel."""
+    def test_on_state_enter_prepare_enquiry_starts_spinner(self, tmp_path: Path) -> None:
+        """Prepare-enquiry state starts a spinner."""
         runner = self._make_runner(tmp_path)
         console = Console(file=open("/dev/null", "w"))  # noqa: SIM115
         tui = DiscussTUI(runner, console=console)
         tui._on_state_enter(DiscussState.PREPARE_ENQUIRY, {})
+        assert tui._active_status is not None
+        tui._stop_spinner()
 
     def test_on_state_enter_presentation_no_crash(self, tmp_path: Path) -> None:
         """Presentation state does not crash (panel rendered by engine)."""
