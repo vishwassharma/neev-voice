@@ -647,6 +647,34 @@ class TestHandlePresentationEnquiry:
         assert result is True
         assert runner.session.state == DiscussState.ENQUIRY
 
+    @patch.object(
+        DiscussRunner,
+        "_wait_after_answer",
+        new_callable=AsyncMock,
+        side_effect=["replay", "exit"],
+    )
+    @patch("neev_voice.discuss.runner.PresentationEngine")
+    async def test_presentation_enquiry_esc_replays_then_exit(
+        self,
+        mock_engine_cls: MagicMock,
+        mock_wait: AsyncMock,
+        runner: DiscussRunner,
+    ) -> None:
+        """ESC after answer replays audio, then ENTER exits."""
+        runner.session.state = DiscussState.PRESENTATION_ENQUIRY
+        runner._current_answer = "The answer"
+        runner.session.concepts = None
+
+        mock_engine = MagicMock()
+        mock_engine.run_answer = AsyncMock(return_value=PresentationResult(completed=True))
+        mock_engine_cls.return_value = mock_engine
+
+        result = await runner._handle_presentation_enquiry()
+        assert result is False
+        # run_answer called twice: initial + replay
+        assert mock_engine.run_answer.call_count == 2
+        assert mock_wait.call_count == 2
+
     @patch("neev_voice.discuss.runner.PresentationEngine")
     async def test_presentation_enquiry_completed_with_concepts_goes_presentation(
         self,

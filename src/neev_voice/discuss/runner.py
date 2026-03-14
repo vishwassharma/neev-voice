@@ -361,32 +361,60 @@ class DiscussRunner:
         if self.session.concepts:
             self._transition(DiscussState.PRESENTATION)
             return True
-        # Enquiry-only mode — wait for user choice
-        user_choice = await self._wait_after_answer()
-        if user_choice == "enquiry":
-            self._transition(DiscussState.ENQUIRY)
-            return True
-        logger.info("enquiry_only_complete")
-        return False
+        # Enquiry-only mode — wait for user choice, loop on replay
+        while True:
+            user_choice = await self._wait_after_answer()
+            if user_choice == "enquiry":
+                self._transition(DiscussState.ENQUIRY)
+                return True
+            if user_choice == "replay":
+                # Re-play the same answer (audio is cached)
+                result = await engine.run_answer(self._current_answer)
+                if result.interrupted:
+                    self.session.state_stack.push(
+                        StateSnapshot(
+                            state=DiscussState.PRESENTATION_ENQUIRY,
+                            data={"answer": self._current_answer, **result.state_data},
+                        )
+                    )
+                    self._transition(DiscussState.ENQUIRY)
+                    return True
+                if result.cancelled:
+                    return False
+                continue  # Back to wait
+            # "exit"
+            logger.info("enquiry_only_complete")
+            return False
 
     async def _wait_after_answer(self) -> str:
         """Wait for user to choose next action after answer playback.
 
-        Shows a prompt and monitors keyboard for SPACE (follow-up
-        question), ENTER (exit), or ESC (exit).
+        Shows a prompt and monitors keyboard:
+        - SPACE → ``"enquiry"`` (ask follow-up)
+        - ENTER → ``"exit"``
+        - ESC → ``"replay"`` (go back to answer, replay audio)
 
         Returns:
-            ``"enquiry"`` if SPACE pressed, ``"exit"`` otherwise.
+            ``"enquiry"``, ``"replay"``, or ``"exit"``.
         """
         import asyncio
 
         from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
 
         from neev_voice.audio.keyboard import KeyboardMonitor, MonitorMode
-        from neev_voice.discuss.tui import make_enquiry_panel
 
         console = Console()
-        console.print(make_enquiry_panel())
+        lines = Text()
+        lines.append("  What would you like to do?\n\n", style="bold")
+        lines.append("  SPACE ", style="bold yellow")
+        lines.append("ask follow-up  ", style="dim")
+        lines.append("ESC ", style="bold magenta")
+        lines.append("replay answer  ", style="dim")
+        lines.append("ENTER ", style="bold green")
+        lines.append("done", style="dim")
+        console.print(Panel(lines, title="Next", border_style="cyan"))
 
         monitor = KeyboardMonitor(mode=MonitorMode.PRESENTATION)
         monitor.start()
@@ -395,7 +423,9 @@ class DiscussRunner:
             while True:
                 if monitor.interrupted_event.is_set():
                     return "enquiry"
-                if monitor.done_event.is_set() or monitor.cancelled_event.is_set():
+                if monitor.cancelled_event.is_set():
+                    return "replay"
+                if monitor.done_event.is_set():
                     return "exit"
                 await asyncio.sleep(0.05)
         finally:
