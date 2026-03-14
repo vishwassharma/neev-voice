@@ -4,6 +4,6 @@ Listens to user voice, transcribes it, extracts intent, discusses plan
 documents, detects agreement/disagreement, and saves results to scratch pad.
 """
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 __all__ = ["__version__"]

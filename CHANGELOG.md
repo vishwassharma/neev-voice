@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-03-14
+
+### Added
+
+- **Conversation history** — Q&A pairs tracked in `history.json` per session; displayed on resume (`--continue`/`--resume`) as timestamped panels
+- **Post-answer wait gate** — after answer playback, app waits for user choice (SPACE follow-up, ESC replay, ENTER exit) instead of auto-exiting
+- **ESC replays answer** — ESC after answer re-plays cached TTS audio without API call; supports multiple replays
+- **ESC from enquiry goes back** — ESC returns to last answer (replay/follow-up/exit) instead of exiting; works across app restarts via history restoration
+- **TTS audio caching** — audio saved to `session_dir/audio/` with slugified filenames; `R` key replays last audio during playback
+- **Transcript accept with Enter** — empty input (Enter key) defaults to Accept in transcript review
+- **Equalizer connected to real audio** — recording equalizer reflects mic RMS levels, playback equalizer reflects audio waveform amplitude
+- **Animated equalizer** — unicode block character animation during playback and recording at 8fps via Rich Live
+- **Playback speed controls** — keys 1-4 (1x/1.25x/1.5x/2x) during playback with active speed highlighted in TUI
+- **TTS transcript formatting rules** — prompt includes Sarvam best practices (spell out abbreviations, code-mixing, conversational tone)
+- 900 tests with 87% code coverage
+
+### Fixed
+
+- **Audio quality** — ffmpeg upsamples Edge TTS MP3 to 44.1kHz WAV; fixed speed change position tracking
+- **ZIP export timestamps** — files with pre-1980 timestamps clamped to 1980-01-01
+- **Export default path** — exports to system temp directory instead of cwd
+- **Log noise in TUI** — `quiet=True` suppresses stdout logs during interactive use
+
+### Changed
+
+- **DiscussTUI** — spinners for prepare/research states, answer text panel with Rich formatting, speed key highlight
+- **Enquiry voice review** — uses TranscriptReviewer (accept/edit/reject) instead of directly opening editor
+
 ## [0.10.0] - 2026-03-14
 
 ### Added
@@ -252,7 +280,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `detect-secrets` and `detect-private-key` pre-commit hooks
 - `no-commit-to-branch` hook protecting main branch
 
-[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/vishwassharma/neev-voice/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/vishwassharma/neev-voice/compare/v0.9.5...v0.10.0
 [0.9.5]: https://github.com/vishwassharma/neev-voice/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/vishwassharma/neev-voice/compare/v0.9.3...v0.9.4
