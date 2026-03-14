@@ -59,6 +59,7 @@ Version is managed by [bump-my-version](https://github.com/callowayproject/bump-
 - `commit = false` and `tag = false` — commits and tags are managed manually via the branch workflow.
 - After bumping: commit on a `chore/bump-X.Y.Z` branch, merge to main, then `git tag vX.Y.Z`.
 - ALWAYS update `CHANGELOG.md` when bumping version.
+- **CRITICAL: The version tag (`vX.Y.Z`) must be the LAST step, placed on the final commit on main after ALL related changes (bump, changelog, CI fixes, docs) are merged.** Never tag intermediate commits — the release workflow checks out the tagged commit, so it must contain everything needed for a successful release.
 
 **Workflow:**
 ```bash
@@ -68,6 +69,7 @@ git checkout -b chore/bump-X.Y.Z
 git add src/neev_voice/__init__.py VERSION pyproject.toml README.md CHANGELOG.md
 git commit -m "chore: bump version to X.Y.Z"
 git checkout main && git merge chore/bump-X.Y.Z --no-ff
+# !! Ensure ALL related changes are on main before tagging !!
 git tag vX.Y.Z
 git push origin main --tags
 ```
