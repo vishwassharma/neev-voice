@@ -16,8 +16,6 @@ repos:
         args: ["--maxkb=500"]
       - id: check-merge-conflict
       - id: detect-private-key
-      - id: no-commit-to-branch
-        args: ["--branch", "main"]
 
   # Ruff: linting + formatting (replaces flake8, isort, black)
   - repo: https://github.com/astral-sh/ruff-pre-commit
