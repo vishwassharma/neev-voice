@@ -31,7 +31,7 @@ Install globally so the `neev` command is available everywhere:
 
 ```bash
 # From GitHub (latest release)
-uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.9.4
+uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.9.5
 
 # From GitHub (latest main)
 uv tool install git+https://github.com/vishwassharma/neev-voice.git@main
@@ -47,14 +47,14 @@ To update when the remote repo changes:
 uv tool upgrade neev-voice
 
 # If pinned to a tag, reinstall with the new tag
-uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.9.4 --force
+uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.9.5 --force
 ```
 
 ### As a project dependency
 
 ```bash
 # Add to another project
-uv add git+https://github.com/vishwassharma/neev-voice.git@v0.9.4
+uv add git+https://github.com/vishwassharma/neev-voice.git@v0.9.5
 ```
 
 ### For development

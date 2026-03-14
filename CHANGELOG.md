@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-03-14
+
+### Fixed
+
+- **Release workflow** — version verification reads from `VERSION` file instead of regex on `pyproject.toml` (which broke when version became dynamic)
+- **Pre-push changelog check** — `scripts/check_changelog_for_tag.sh` validates CHANGELOG.md entry before pushing version tags
+- **Version tagging rule** — documented that tags must be placed on the final main commit after all related changes are merged
+
+### Changed
+
+- Removed `no-commit-to-branch` pre-commit hook (single developer workflow)
+
 ## [0.9.4] - 2026-03-14
 
 ### Changed
@@ -223,7 +235,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `detect-secrets` and `detect-private-key` pre-commit hooks
 - `no-commit-to-branch` hook protecting main branch
 
-[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/vishwassharma/neev-voice/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/vishwassharma/neev-voice/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/vishwassharma/neev-voice/compare/v0.9.0...v0.9.3
 [0.9.1]: https://github.com/vishwassharma/neev-voice/compare/v0.9.0...v0.9.1
