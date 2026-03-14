@@ -100,18 +100,19 @@ class TranscriptReviewer:
         """
         valid = {
             "a": TranscriptReviewAction.ACCEPT,
+            "": TranscriptReviewAction.ACCEPT,
             "e": TranscriptReviewAction.EDIT,
             "r": TranscriptReviewAction.REJECT,
         }
         while True:
             self._console.print(
-                "[bold][A][/bold]ccept  |  [bold][E][/bold]dit  |  [bold][R][/bold]eject",
+                "[bold][A/Enter][/bold]ccept  |  [bold][E][/bold]dit  |  [bold][R][/bold]eject",
                 style="dim",
             )
             choice = input("> ").strip().lower()
             if choice in valid:
                 return valid[choice]
-            self._console.print("[red]Invalid choice. Enter A, E, or R.[/red]")
+            self._console.print("[red]Invalid choice. Press Enter, A, E, or R.[/red]")
 
     async def _open_editor(self, path: Path) -> str:
         """Open the transcript file in the user's editor.
