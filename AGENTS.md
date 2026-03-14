@@ -17,7 +17,7 @@ cp .env.example .env         # configure API keys
 ## Build & Test
 
 ```bash
-uv run pytest                # run full test suite (537 tests, >95% coverage)
+uv run pytest                # run full test suite (721 tests, >91% coverage)
 uv run ruff check src/ tests/  # lint
 uv run ruff format src/ tests/  # format
 pre-commit run --all-files   # all pre-commit hooks
@@ -25,7 +25,7 @@ pre-commit run --all-files   # all pre-commit hooks
 
 ## Architecture
 
-- **Source layout**: `src/neev_voice/` with subpackages `audio/`, `stt/`, `tts/`, `llm/`, `intent/`, `discussion/`
+- **Source layout**: `src/neev_voice/` with subpackages `audio/`, `stt/`, `tts/`, `llm/`, `intent/`, `discussion/`, `discuss/`
 - **Tests**: `tests/` mirrors source structure, pytest with asyncio_mode=auto
 - **Provider pattern**: ABC base classes (`stt/base.py`, `tts/base.py`) with factory functions
 - **Config**: pydantic-settings v2 with `NeevSettings`, layered priority (init > env > .env > JSON file at `~/.config/neev/voice.json`)
@@ -48,12 +48,19 @@ pre-commit run --all-files   # all pre-commit hooks
 |------|---------|
 | `src/neev_voice/cli.py` | Typer CLI commands (listen, discuss, config, providers, version) |
 | `src/neev_voice/config.py` | NeevSettings, enums, DEFAULT_CONFIG, config helpers |
-| `src/neev_voice/audio/keyboard.py` | Push-to-talk KeyboardMonitor (SPACEBAR/ENTER/ESC) |
+| `src/neev_voice/audio/keyboard.py` | KeyboardMonitor with MonitorMode (RECORDING/PRESENTATION) |
 | `src/neev_voice/audio/recorder.py` | AudioRecorder with VAD and push-to-talk |
 | `src/neev_voice/llm/agent.py` | EnrichmentAgent with system prompt builder |
 | `src/neev_voice/scratch.py` | ScratchPad class for artifact persistence |
 | `src/neev_voice/intent/extractor.py` | IntentExtractor with Hindi-English indicators |
 | `src/neev_voice/discussion/manager.py` | DiscussionManager for section-by-section review |
+| `src/neev_voice/discuss/state.py` | DiscussState enum, StateSnapshot, StateStack |
+| `src/neev_voice/discuss/session.py` | SessionManager with atomic JSON persistence |
+| `src/neev_voice/discuss/prepare.py` | PrepareEngine - Claude CLI document research |
+| `src/neev_voice/discuss/presentation.py` | PresentationEngine - interruptible TTS playback |
+| `src/neev_voice/discuss/enquiry.py` | EnquiryEngine - voice/text enquiry capture |
+| `src/neev_voice/discuss/prepare_enquiry.py` | PrepareEnquiryEngine - answer research |
+| `src/neev_voice/discuss/runner.py` | DiscussRunner - state machine orchestrator |
 | `scripts/generate_release_notes.py` | Release notes from CHANGELOG.md or git log |
 
 ## Repository Layout

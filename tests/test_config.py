@@ -379,6 +379,12 @@ class TestDefaultConfig:
             "llm_api_base",
             "enrichment_version",
             "enrichment_max_iterations",
+            "discuss_base_dir",
+            "discuss_mcp_config",
+            "discuss_max_doc_chars",
+            "discuss_max_source_chars",
+            "discuss_doc_extensions",
+            "discuss_prepare_model",
         }
         assert set(DEFAULT_CONFIG.keys()) == expected_keys
 
@@ -616,3 +622,152 @@ class TestAPIKeyFallbackEnvVars:
         monkeypatch.setenv("NEEV_CLAUDE_MODEL", "haiku")
         settings = NeevSettings(_env_file=None)
         assert settings.claude_model == "haiku"
+
+
+class TestDiscussConfigFields:
+    """Tests for discuss state machine configuration fields."""
+
+    def test_discuss_base_dir_default(self):
+        """Test discuss_base_dir defaults to .scratch/neev/discuss."""
+        settings = NeevSettings()
+        assert settings.discuss_base_dir == ".scratch/neev/discuss"
+
+    def test_discuss_base_dir_custom(self):
+        """Test discuss_base_dir can be overridden."""
+        settings = NeevSettings(discuss_base_dir="/tmp/sessions")
+        assert settings.discuss_base_dir == "/tmp/sessions"
+
+    def test_discuss_mcp_config_default_empty(self):
+        """Test discuss_mcp_config defaults to empty string."""
+        settings = NeevSettings()
+        assert settings.discuss_mcp_config == ""
+
+    def test_discuss_mcp_config_custom(self):
+        """Test discuss_mcp_config can be set."""
+        settings = NeevSettings(discuss_mcp_config="/custom/mcp.json")
+        assert settings.discuss_mcp_config == "/custom/mcp.json"
+
+    def test_resolved_mcp_config_default(self):
+        """Test resolved_mcp_config falls back to default path."""
+        settings = NeevSettings()
+        assert settings.resolved_mcp_config.endswith("mcphub/servers.json")
+
+    def test_resolved_mcp_config_custom(self):
+        """Test resolved_mcp_config uses custom path when set."""
+        settings = NeevSettings(discuss_mcp_config="/my/mcp.json")
+        assert settings.resolved_mcp_config == "/my/mcp.json"
+
+    def test_discuss_max_doc_chars_default(self):
+        """Test discuss_max_doc_chars defaults to 100000."""
+        settings = NeevSettings()
+        assert settings.discuss_max_doc_chars == 100_000
+
+    def test_discuss_max_doc_chars_custom(self):
+        """Test discuss_max_doc_chars accepts custom value."""
+        settings = NeevSettings(discuss_max_doc_chars=200_000)
+        assert settings.discuss_max_doc_chars == 200_000
+
+    def test_discuss_max_doc_chars_min(self):
+        """Test discuss_max_doc_chars rejects value below 1000."""
+        with pytest.raises(ValidationError):
+            NeevSettings(discuss_max_doc_chars=500)
+
+    def test_discuss_max_doc_chars_max(self):
+        """Test discuss_max_doc_chars rejects value above 1000000."""
+        with pytest.raises(ValidationError):
+            NeevSettings(discuss_max_doc_chars=2_000_000)
+
+    def test_discuss_max_source_chars_default(self):
+        """Test discuss_max_source_chars defaults to 50000."""
+        settings = NeevSettings()
+        assert settings.discuss_max_source_chars == 50_000
+
+    def test_discuss_max_source_chars_custom(self):
+        """Test discuss_max_source_chars accepts custom value."""
+        settings = NeevSettings(discuss_max_source_chars=100_000)
+        assert settings.discuss_max_source_chars == 100_000
+
+    def test_discuss_max_source_chars_min(self):
+        """Test discuss_max_source_chars rejects value below 1000."""
+        with pytest.raises(ValidationError):
+            NeevSettings(discuss_max_source_chars=999)
+
+    def test_discuss_max_source_chars_max(self):
+        """Test discuss_max_source_chars rejects value above 500000."""
+        with pytest.raises(ValidationError):
+            NeevSettings(discuss_max_source_chars=600_000)
+
+    def test_discuss_doc_extensions_default(self):
+        """Test discuss_doc_extensions has all expected formats."""
+        settings = NeevSettings()
+        assert ".md" in settings.discuss_doc_extensions
+        assert ".txt" in settings.discuss_doc_extensions
+
+    def test_discuss_doc_extensions_custom(self):
+        """Test discuss_doc_extensions can be overridden."""
+        settings = NeevSettings(discuss_doc_extensions=".md,.py")
+        assert settings.discuss_doc_extensions == ".md,.py"
+
+    def test_resolved_doc_extensions_parses_csv(self):
+        """Test resolved_doc_extensions parses comma-separated string."""
+        settings = NeevSettings(discuss_doc_extensions=".md,.txt,.rst")
+        exts = settings.resolved_doc_extensions
+        assert exts == {".md", ".txt", ".rst"}
+
+    def test_resolved_doc_extensions_adds_dots(self):
+        """Test resolved_doc_extensions adds leading dots if missing."""
+        settings = NeevSettings(discuss_doc_extensions="md,txt")
+        exts = settings.resolved_doc_extensions
+        assert ".md" in exts
+        assert ".txt" in exts
+
+    def test_resolved_doc_extensions_strips_whitespace(self):
+        """Test resolved_doc_extensions strips whitespace."""
+        settings = NeevSettings(discuss_doc_extensions=" .md , .txt ")
+        exts = settings.resolved_doc_extensions
+        assert ".md" in exts
+        assert ".txt" in exts
+
+    def test_resolved_doc_extensions_ignores_empty(self):
+        """Test resolved_doc_extensions ignores empty segments."""
+        settings = NeevSettings(discuss_doc_extensions=".md,,,.txt")
+        exts = settings.resolved_doc_extensions
+        assert exts == {".md", ".txt"}
+
+    def test_discuss_prepare_model_default_empty(self):
+        """Test discuss_prepare_model defaults to empty."""
+        settings = NeevSettings()
+        assert settings.discuss_prepare_model == ""
+
+    def test_discuss_prepare_model_custom(self):
+        """Test discuss_prepare_model can be set."""
+        settings = NeevSettings(discuss_prepare_model="opus")
+        assert settings.discuss_prepare_model == "opus"
+
+    def test_resolved_discuss_model_falls_back(self):
+        """Test resolved_discuss_model falls back to claude_model."""
+        settings = NeevSettings(claude_model="sonnet")
+        assert settings.resolved_discuss_model == "sonnet"
+
+    def test_resolved_discuss_model_uses_custom(self):
+        """Test resolved_discuss_model uses discuss_prepare_model when set."""
+        settings = NeevSettings(claude_model="sonnet", discuss_prepare_model="opus")
+        assert settings.resolved_discuss_model == "opus"
+
+    def test_default_config_includes_discuss_fields(self):
+        """Test DEFAULT_CONFIG includes all discuss fields."""
+        assert "discuss_base_dir" in DEFAULT_CONFIG
+        assert "discuss_mcp_config" in DEFAULT_CONFIG
+        assert "discuss_max_doc_chars" in DEFAULT_CONFIG
+        assert "discuss_max_source_chars" in DEFAULT_CONFIG
+        assert "discuss_doc_extensions" in DEFAULT_CONFIG
+        assert "discuss_prepare_model" in DEFAULT_CONFIG
+
+    def test_default_config_discuss_values(self):
+        """Test DEFAULT_CONFIG discuss values match field defaults."""
+        assert DEFAULT_CONFIG["discuss_base_dir"] == ".scratch/neev/discuss"
+        assert DEFAULT_CONFIG["discuss_mcp_config"] == ""
+        assert DEFAULT_CONFIG["discuss_max_doc_chars"] == 100000
+        assert DEFAULT_CONFIG["discuss_max_source_chars"] == 50000
+        assert DEFAULT_CONFIG["discuss_doc_extensions"] == ".md,.txt,.rst,.html,.pdf,.json"
+        assert DEFAULT_CONFIG["discuss_prepare_model"] == ""

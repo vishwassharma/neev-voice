@@ -1,0 +1,366 @@
+"""State machine runner for the discuss subcommand.
+
+Orchestrates the discuss state machine by delegating to the
+appropriate engine for each state and managing transitions,
+state stack push/pop, and session persistence.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import structlog
+
+from neev_voice.discuss.enquiry import EnquiryEngine, EnquiryResult
+from neev_voice.discuss.prepare import PrepareEngine
+from neev_voice.discuss.prepare_enquiry import PrepareEnquiryEngine
+from neev_voice.discuss.presentation import PresentationEngine
+from neev_voice.discuss.session import SessionInfo, SessionManager
+from neev_voice.discuss.state import (
+    DiscussState,
+    StateSnapshot,
+    validate_transition,
+)
+
+if TYPE_CHECKING:
+    from neev_voice.config import NeevSettings
+    from neev_voice.stt.base import STTProvider
+    from neev_voice.tts.base import TTSProvider
+
+logger = structlog.get_logger(__name__)
+
+__all__ = ["DiscussRunner"]
+
+
+class DiscussRunner:
+    """Main state machine orchestrator for discuss sessions.
+
+    Runs the discuss state machine loop, delegating to the appropriate
+    engine for each state and managing transitions. Persists session
+    state after every transition for crash recovery.
+
+    Attributes:
+        session: Current discuss session info.
+        settings: Application settings.
+        session_manager: Session persistence manager.
+        tts_provider: TTS provider for presentation audio.
+        stt_provider: STT provider for voice enquiry.
+    """
+
+    def __init__(
+        self,
+        session: SessionInfo,
+        settings: NeevSettings,
+        session_manager: SessionManager,
+        tts_provider: TTSProvider | None = None,
+        stt_provider: STTProvider | None = None,
+    ) -> None:
+        """Initialize the state machine runner.
+
+        Args:
+            session: Current discuss session info.
+            settings: Application settings.
+            session_manager: Session persistence manager.
+            tts_provider: Optional TTS provider for audio synthesis.
+            stt_provider: Optional STT provider for voice transcription.
+        """
+        self.session = session
+        self.settings = settings
+        self.session_manager = session_manager
+        self.tts_provider = tts_provider
+        self.stt_provider = stt_provider
+
+        # Transient state (not persisted, used between transitions)
+        self._current_enquiry: EnquiryResult | None = None
+        self._current_answer: str | None = None
+        self._restored_state_data: dict | None = None
+
+    async def run(self) -> None:
+        """Run the discuss state machine loop.
+
+        Loops through states, delegating to the appropriate handler
+        for each state. The loop exits when all concepts are presented,
+        the user cancels, or an unrecoverable error occurs.
+        """
+        logger.info(
+            "discuss_runner_started",
+            session=self.session.name,
+            initial_state=self.session.state,
+        )
+
+        while True:
+            state = self.session.state
+            logger.info("discuss_runner_state", state=state)
+
+            match state:
+                case DiscussState.PREPARE:
+                    should_continue = await self._handle_prepare()
+                case DiscussState.PRESENTATION:
+                    should_continue = await self._handle_presentation()
+                case DiscussState.ENQUIRY:
+                    should_continue = await self._handle_enquiry()
+                case DiscussState.PREPARE_ENQUIRY:
+                    should_continue = await self._handle_prepare_enquiry()
+                case DiscussState.PRESENTATION_ENQUIRY:
+                    should_continue = await self._handle_presentation_enquiry()
+                case _:
+                    logger.error("discuss_runner_unknown_state", state=state)
+                    break
+
+            if not should_continue:
+                break
+
+        logger.info("discuss_runner_finished", session=self.session.name)
+
+    async def _handle_prepare(self) -> bool:
+        """Handle the PREPARE state.
+
+        Runs the prepare engine to analyze documents and extract
+        concepts. Transitions to PRESENTATION on completion.
+
+        Returns:
+            True to continue the state machine loop.
+        """
+        prepare_dir = self.session_manager.session_dir(self.session.name) / "prepare"
+
+        engine = PrepareEngine(
+            session=self.session,
+            settings=self.settings,
+            prepare_dir=prepare_dir,
+        )
+        concepts = await engine.run()
+
+        if not concepts:
+            logger.warning("prepare_no_concepts")
+            return False
+
+        self.session.concepts = [c.to_dict() for c in concepts]
+        self.session.prepare_complete = True
+        self._transition(DiscussState.PRESENTATION)
+        return True
+
+    async def _handle_presentation(self) -> bool:
+        """Handle the PRESENTATION state.
+
+        Presents concepts via TTS. On interrupt (SPACEBAR), pushes
+        state to stack and transitions to ENQUIRY. On completion,
+        exits the loop.
+
+        Returns:
+            True to continue, False to exit.
+        """
+        prepare_dir = self.session_manager.session_dir(self.session.name) / "prepare"
+
+        # Determine start index
+        start_index = 0
+        if self._restored_state_data:
+            start_index = self._restored_state_data.get("current_concept_index", 0)
+            self._restored_state_data = None
+
+        engine = PresentationEngine(
+            session=self.session,
+            settings=self.settings,
+            tts_provider=self.tts_provider,
+            prepare_dir=prepare_dir,
+        )
+
+        result = await engine.run(start_index=start_index)
+
+        if result.interrupted:
+            # Push current state and transition to enquiry
+            self.session.state_stack.push(
+                StateSnapshot(
+                    state=DiscussState.PRESENTATION,
+                    data=result.state_data,
+                )
+            )
+            self._transition(DiscussState.ENQUIRY)
+            return True
+
+        if result.cancelled:
+            return False
+
+        if result.completed:
+            logger.info("presentation_complete")
+            return False
+
+        return True
+
+    async def _handle_enquiry(self) -> bool:
+        """Handle the ENQUIRY state.
+
+        Captures user enquiry via voice or text. On ESC, pops state
+        stack and returns to the previous state. On query capture,
+        transitions to PREPARE_ENQUIRY.
+
+        Returns:
+            True to continue, False to exit.
+        """
+        session_dir = self.session_manager.session_dir(self.session.name)
+
+        engine = EnquiryEngine(
+            session=self.session,
+            settings=self.settings,
+            stt_provider=self.stt_provider,
+            session_dir=session_dir,
+        )
+
+        result = await engine.run()
+
+        if result.escaped:
+            # Pop state stack and restore
+            snapshot = self.session.state_stack.pop()
+            if snapshot:
+                self._restore_state(snapshot)
+            else:
+                # No state to restore — go back to presentation
+                self._transition(DiscussState.PRESENTATION)
+            return True
+
+        if result.query:
+            self._current_enquiry = result
+            self._transition(DiscussState.PREPARE_ENQUIRY)
+            return True
+
+        # No query (e.g., editor cancelled) — stay in enquiry
+        return True
+
+    async def _handle_prepare_enquiry(self) -> bool:
+        """Handle the PREPARE_ENQUIRY state.
+
+        Researches the answer to the user's enquiry. Checks if
+        coming from a nested presentation-enquiry path to update
+        the previous answer.
+
+        Returns:
+            True to continue.
+        """
+        if not self._current_enquiry or not self._current_enquiry.query:
+            logger.warning("prepare_enquiry_no_query")
+            self._transition(DiscussState.ENQUIRY)
+            return True
+
+        session_dir = self.session_manager.session_dir(self.session.name)
+
+        # Check if this is a follow-up from presentation-enquiry
+        previous_state = self.session.state_stack.peek()
+        from_pres_enquiry = (
+            previous_state is not None and previous_state.state == DiscussState.PRESENTATION_ENQUIRY
+        )
+        previous_answer = (
+            previous_state.data.get("answer") if from_pres_enquiry and previous_state else None
+        )
+
+        engine = PrepareEnquiryEngine(
+            session=self.session,
+            settings=self.settings,
+            session_dir=session_dir,
+        )
+
+        self._current_answer = await engine.run(
+            query=self._current_enquiry.query,
+            from_presentation_enquiry=from_pres_enquiry,
+            previous_answer=previous_answer,
+        )
+
+        self._transition(DiscussState.PRESENTATION_ENQUIRY)
+        return True
+
+    async def _handle_presentation_enquiry(self) -> bool:
+        """Handle the PRESENTATION_ENQUIRY state.
+
+        Presents the answer to the user's enquiry via TTS.
+        On ENTER (completion), pops stack and returns to presentation.
+        On SPACEBAR (interrupt), pushes state and transitions to enquiry.
+
+        Returns:
+            True to continue, False to exit.
+        """
+        if not self._current_answer:
+            logger.warning("presentation_enquiry_no_answer")
+            # Pop back to presentation
+            snapshot = self.session.state_stack.pop()
+            if snapshot:
+                self._restore_state(snapshot)
+            else:
+                self._transition(DiscussState.PRESENTATION)
+            return True
+
+        prepare_dir = self.session_manager.session_dir(self.session.name) / "prepare"
+
+        engine = PresentationEngine(
+            session=self.session,
+            settings=self.settings,
+            tts_provider=self.tts_provider,
+            prepare_dir=prepare_dir,
+        )
+
+        result = await engine.run_answer(self._current_answer)
+
+        if result.interrupted:
+            # Nested enquiry — push and transition
+            self.session.state_stack.push(
+                StateSnapshot(
+                    state=DiscussState.PRESENTATION_ENQUIRY,
+                    data={
+                        "answer": self._current_answer,
+                        **result.state_data,
+                    },
+                )
+            )
+            self._transition(DiscussState.ENQUIRY)
+            return True
+
+        if result.cancelled:
+            return False
+
+        # Answer presented (ENTER or completed) — pop stack, return to presentation
+        snapshot = self.session.state_stack.pop()
+        if snapshot and snapshot.state == DiscussState.PRESENTATION:
+            self._restore_state(snapshot)
+        else:
+            self._transition(DiscussState.PRESENTATION)
+        return True
+
+    def _transition(self, new_state: DiscussState) -> None:
+        """Transition to a new state with validation and persistence.
+
+        Args:
+            new_state: The state to transition to.
+
+        Raises:
+            ValueError: If the transition is not valid.
+        """
+        old_state = self.session.state
+        if not validate_transition(old_state, new_state):
+            logger.error(
+                "invalid_transition",
+                from_state=old_state,
+                to_state=new_state,
+            )
+            raise ValueError(f"Invalid state transition: {old_state} → {new_state}")
+
+        logger.info(
+            "discuss_state_transition",
+            from_state=old_state,
+            to_state=new_state,
+        )
+        self.session.state = new_state
+        self.session_manager.save_session(self.session)
+
+    def _restore_state(self, snapshot: StateSnapshot) -> None:
+        """Restore state from a stack snapshot.
+
+        Sets the session state to the snapshot's state and stores
+        the state data for use by the handler.
+
+        Args:
+            snapshot: The state snapshot to restore from.
+        """
+        logger.info(
+            "discuss_state_restored",
+            restored_state=snapshot.state,
+        )
+        self.session.state = snapshot.state
+        self._restored_state_data = snapshot.data
+        self.session_manager.save_session(self.session)

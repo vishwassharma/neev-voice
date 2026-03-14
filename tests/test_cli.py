@@ -197,7 +197,7 @@ class TestHelpCommand:
         """Test discuss command help."""
         result = runner.invoke(app, ["discuss", "--help"])
         assert result.exit_code == 0
-        assert "document" in result.output.lower()
+        assert "research" in result.output.lower() or "session" in result.output.lower()
 
 
 class TestDisplayIntent:
@@ -380,146 +380,163 @@ class TestListenCancellation:
 class TestDiscussCommand:
     """Tests for discuss command async flow."""
 
-    async def test_discuss_async_missing_doc(self, mocker, tmp_path):
-        """Test discuss with missing document."""
+    async def test_discuss_async_missing_files(self, mocker, tmp_path):
+        """Test discuss without --files flag errors."""
         from click.exceptions import Exit
 
         from neev_voice.cli import _discuss_async
 
+        mocker.patch("neev_voice.cli._get_settings", return_value=MagicMock())
+
+        with pytest.raises(Exit):
+            await _discuss_async(
+                None,
+                None,
+                None,
+                False,
+                None,
+                False,
+                False,
+                None,
+                None,
+                None,
+                False,
+            )
+
+    async def test_discuss_async_missing_research_path(self, mocker, tmp_path):
+        """Test discuss with nonexistent --files path errors."""
+        from click.exceptions import Exit
+
+        from neev_voice.cli import _discuss_async
+
+        mocker.patch("neev_voice.cli._get_settings", return_value=MagicMock())
+
+        with pytest.raises(Exit):
+            await _discuss_async(
+                None,
+                str(tmp_path / "nonexistent"),
+                None,
+                False,
+                None,
+                False,
+                False,
+                None,
+                None,
+                None,
+                False,
+            )
+
+    async def test_discuss_async_new_session(self, mocker, tmp_path):
+        """Test creating a new discuss session."""
+        from neev_voice.cli import _discuss_async
+
         settings = MagicMock()
         settings.stt_provider.value = "sarvam"
         settings.tts_provider.value = "edge"
         settings.sarvam_api_key = "test"
-        settings.anthropic_api_key = "test-key"
         mocker.patch("neev_voice.cli._get_settings", return_value=settings)
 
+        # Mock providers
         mocker.patch("neev_voice.stt.sarvam.get_stt_provider")
         mocker.patch("neev_voice.tts.edge.get_tts_provider")
-        mocker.patch("neev_voice.audio.recorder.AudioRecorder")
-        mocker.patch("neev_voice.llm.agent.EnrichmentAgent")
-        mocker.patch("neev_voice.intent.extractor.IntentExtractor")
 
-        mock_scratch = MagicMock()
-        mock_scratch.flow_dir = tmp_path / "scratch"
-        mocker.patch("neev_voice.scratch.ScratchPad", return_value=mock_scratch)
-        mocker.patch("neev_voice.scratch.ScratchPad.get_latest_folder", return_value=None)
-
-        mock_manager = MagicMock()
-        mock_manager.run_discussion = AsyncMock(side_effect=FileNotFoundError("not found"))
+        # Mock session manager and runner
+        mock_session_mgr = MagicMock()
+        mock_session = MagicMock()
+        mock_session.name = "test-session"
+        mock_session.state = "prepare"
+        mock_session_mgr.create_session.return_value = mock_session
         mocker.patch(
-            "neev_voice.discussion.manager.DiscussionManager",
-            return_value=mock_manager,
+            "neev_voice.discuss.session.SessionManager",
+            return_value=mock_session_mgr,
+        )
+
+        mock_runner = MagicMock()
+        mock_runner.run = AsyncMock()
+        mocker.patch(
+            "neev_voice.discuss.runner.DiscussRunner",
+            return_value=mock_runner,
+        )
+
+        research_dir = tmp_path / "research"
+        research_dir.mkdir()
+
+        await _discuss_async(
+            "my-session",
+            str(research_dir),
+            str(tmp_path),
+            False,
+            None,
+            False,
+            False,
+            None,
+            None,
+            None,
+            True,
+        )
+
+        mock_runner.run.assert_called_once()
+
+    async def test_discuss_async_resume_not_found(self, mocker, tmp_path):
+        """Test resume with nonexistent session errors."""
+        from click.exceptions import Exit
+
+        from neev_voice.cli import _discuss_async
+
+        mocker.patch("neev_voice.cli._get_settings", return_value=MagicMock())
+
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.load_session.return_value = None
+        mock_session_mgr.list_sessions.return_value = []
+        mocker.patch(
+            "neev_voice.discuss.session.SessionManager",
+            return_value=mock_session_mgr,
         )
 
         with pytest.raises(Exit):
-            await _discuss_async(str(tmp_path / "missing.md"), None, None, None, False)
+            await _discuss_async(
+                None,
+                None,
+                None,
+                False,
+                "nonexistent",
+                False,
+                False,
+                None,
+                None,
+                None,
+                False,
+            )
 
-    async def test_discuss_async_success(self, mocker, tmp_path):
-        """Test successful discuss flow with scratch pad integration."""
+    async def test_discuss_async_continue_no_session(self, mocker, tmp_path):
+        """Test --continue with no sessions errors."""
+        from click.exceptions import Exit
+
         from neev_voice.cli import _discuss_async
-        from neev_voice.discussion.manager import DiscussionResult
 
-        settings = MagicMock()
-        settings.stt_provider.value = "sarvam"
-        settings.tts_provider.value = "edge"
-        settings.sarvam_api_key = "test"
-        settings.anthropic_api_key = "test-key"
-        mocker.patch("neev_voice.cli._get_settings", return_value=settings)
+        mocker.patch("neev_voice.cli._get_settings", return_value=MagicMock())
 
-        mocker.patch("neev_voice.stt.sarvam.get_stt_provider")
-        mocker.patch("neev_voice.tts.edge.get_tts_provider")
-        mocker.patch("neev_voice.audio.recorder.AudioRecorder")
-        mocker.patch("neev_voice.llm.agent.EnrichmentAgent")
-        mocker.patch("neev_voice.intent.extractor.IntentExtractor")
-
-        mock_scratch = MagicMock()
-        mock_scratch.flow_dir = tmp_path / "scratch"
-        mocker.patch("neev_voice.scratch.ScratchPad", return_value=mock_scratch)
-        mocker.patch("neev_voice.scratch.ScratchPad.get_latest_folder", return_value=None)
-
-        mock_manager = MagicMock()
-        mock_manager.run_discussion = AsyncMock(
-            return_value=[
-                DiscussionResult(
-                    section="## Intro",
-                    user_response="yes",
-                    intent=IntentCategory.AGREEMENT,
-                    summary="agrees",
-                ),
-                DiscussionResult(
-                    section="## Design",
-                    user_response="no",
-                    intent=IntentCategory.DISAGREEMENT,
-                    summary="disagrees",
-                ),
-            ]
-        )
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.get_latest_session.return_value = None
         mocker.patch(
-            "neev_voice.discussion.manager.DiscussionManager",
-            return_value=mock_manager,
+            "neev_voice.discuss.session.SessionManager",
+            return_value=mock_session_mgr,
         )
 
-        doc = tmp_path / "test.md"
-        doc.write_text("test")
-        await _discuss_async(str(doc), None, None, None, verbose=True)
-
-        # Verify scratch pad methods were called
-        assert mock_scratch.save_section.call_count == 2
-        mock_scratch.save_summary.assert_called_once()
-        mock_scratch.save_metadata.assert_called_once()
-        mock_scratch.save_discussion_result.assert_called_once()
-
-    async def test_discuss_reads_latest_listen_context(self, mocker, tmp_path):
-        """Test discuss reads transcription from latest listen folder."""
-        from neev_voice.cli import _discuss_async
-        from neev_voice.discussion.manager import DiscussionResult
-
-        settings = MagicMock()
-        settings.stt_provider.value = "sarvam"
-        settings.tts_provider.value = "edge"
-        settings.sarvam_api_key = "test"
-        settings.anthropic_api_key = "test-key"
-        mocker.patch("neev_voice.cli._get_settings", return_value=settings)
-
-        mocker.patch("neev_voice.stt.sarvam.get_stt_provider")
-        mocker.patch("neev_voice.tts.edge.get_tts_provider")
-        mocker.patch("neev_voice.audio.recorder.AudioRecorder")
-        mocker.patch("neev_voice.llm.agent.EnrichmentAgent")
-        mocker.patch("neev_voice.intent.extractor.IntentExtractor")
-
-        mock_scratch = MagicMock()
-        mock_scratch.flow_dir = tmp_path / "scratch"
-        mocker.patch("neev_voice.scratch.ScratchPad", return_value=mock_scratch)
-
-        # Create a latest listen folder with transcription
-        listen_dir = tmp_path / "listen"
-        listen_dir.mkdir()
-        transcription_file = listen_dir / "transcription.txt"
-        transcription_file.write_text("previous transcription")
-        mocker.patch(
-            "neev_voice.scratch.ScratchPad.get_latest_folder",
-            return_value=listen_dir,
-        )
-
-        mock_manager = MagicMock()
-        mock_manager.run_discussion = AsyncMock(
-            return_value=[
-                DiscussionResult(
-                    section="## Intro",
-                    user_response="yes",
-                    intent=IntentCategory.AGREEMENT,
-                    summary="agrees",
-                ),
-            ]
-        )
-        mocker.patch(
-            "neev_voice.discussion.manager.DiscussionManager",
-            return_value=mock_manager,
-        )
-
-        doc = tmp_path / "test.md"
-        doc.write_text("test")
-        await _discuss_async(str(doc), None, None, None, False)
+        with pytest.raises(Exit):
+            await _discuss_async(
+                None,
+                None,
+                None,
+                True,
+                None,
+                False,
+                False,
+                None,
+                None,
+                None,
+                False,
+            )
 
 
 class TestListenWithMode:
@@ -609,12 +626,12 @@ class TestListenWithMode:
         plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
         assert "--mode" in plain
 
-    def test_discuss_help_shows_mode_option(self):
-        """Test discuss --help mentions the --mode option."""
+    def test_discuss_help_shows_files_option(self):
+        """Test discuss --help mentions the --files option."""
         result = runner.invoke(app, ["discuss", "--help"])
         assert result.exit_code == 0
         plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
-        assert "--mode" in plain
+        assert "--files" in plain
 
 
 class TestBuildDiscussionResultMd:
@@ -1076,6 +1093,35 @@ class TestConfigEnrichmentDisplay:
         """Test config shows Enrichment Max Iterations row."""
         result = runner.invoke(app, ["config"])
         assert "Enrichment Max Iterations" in result.output
+
+
+class TestConfigDiscussDisplay:
+    """Tests for discuss config display in config command."""
+
+    def test_config_shows_discuss_base_dir(self):
+        """Test config shows Discuss Base Dir row."""
+        result = runner.invoke(app, ["config"])
+        assert "Discuss Base Dir" in result.output
+
+    def test_config_shows_discuss_mcp_config(self):
+        """Test config shows Discuss MCP Config row."""
+        result = runner.invoke(app, ["config"])
+        assert "Discuss MCP Config" in result.output
+
+    def test_config_shows_discuss_max_doc_chars(self):
+        """Test config shows Discuss Max Doc Chars row."""
+        result = runner.invoke(app, ["config"])
+        assert "Discuss Max Doc Chars" in result.output
+
+    def test_config_shows_discuss_doc_extensions(self):
+        """Test config shows Discuss Doc Extensions row."""
+        result = runner.invoke(app, ["config"])
+        assert "Discuss Doc Extensions" in result.output
+
+    def test_config_shows_discuss_prepare_model(self):
+        """Test config shows Discuss Prepare Model row."""
+        result = runner.invoke(app, ["config"])
+        assert "Discuss Prepare Model" in result.output
 
 
 class TestEnrichCommand:
