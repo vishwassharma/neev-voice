@@ -40,14 +40,22 @@ EQUALIZER_FRAMES = [
     "▅ ▃ ▁ ▃ ▅ ▇ ▅",
     "▃ ▁ ▃ ▅ ▇ ▅ ▃",
 ]
-"""Unicode block character frames for equalizer animation."""
+"""Fallback animation frames when no real audio level is available."""
+
+_BARS = " ▁▂▃▄▅▆▇"
+"""Unicode block characters ordered by height (9 levels)."""
 
 SPEED_LABELS = {1.0: "1x", 1.25: "1.25x", 1.5: "1.5x", 2.0: "2x"}
 """Display labels for playback speeds."""
 
+_NUM_EQ_BARS = 7
+"""Number of bars in the equalizer display."""
+
 
 def get_equalizer_frame(tick: int) -> str:
-    """Get the equalizer animation frame for a given tick.
+    """Get a preset equalizer animation frame for a given tick.
+
+    Fallback when no real audio level data is available.
 
     Args:
         tick: Animation tick counter (increments each refresh).
@@ -58,6 +66,36 @@ def get_equalizer_frame(tick: int) -> str:
     return EQUALIZER_FRAMES[tick % len(EQUALIZER_FRAMES)]
 
 
+def level_to_bars(level: float, num_bars: int = _NUM_EQ_BARS) -> str:
+    """Convert an audio RMS level (0.0-1.0) to unicode equalizer bars.
+
+    Generates bars of varying height based on the level, with a
+    peak in the center and taper at the edges for a natural look.
+
+    Args:
+        level: Audio RMS level clamped to 0.0-1.0.
+        num_bars: Number of bars to generate.
+
+    Returns:
+        Space-separated unicode bar string.
+    """
+    import random
+
+    level = max(0.0, min(1.0, level))
+    max_idx = len(_BARS) - 1
+    bars = []
+    for i in range(num_bars):
+        # Taper: center bars higher, edges lower
+        distance = abs(i - num_bars // 2) / (num_bars // 2)
+        taper = 1.0 - distance * 0.4
+        height = level * taper
+        # Add small random jitter for natural look
+        jitter = random.uniform(-0.1, 0.1)  # noqa: S311
+        idx = int(max(0.0, min(1.0, height + jitter)) * max_idx)
+        bars.append(_BARS[idx])
+    return " ".join(bars)
+
+
 def make_playback_panel(
     title: str = "Answer",
     speed: float = 1.0,
@@ -65,23 +103,27 @@ def make_playback_panel(
     index: int = 0,
     total: int = 1,
     is_answer: bool = False,
+    level: float = -1.0,
 ) -> Panel:
     """Create an animated playback panel with equalizer and speed controls.
 
-    Used during both concept presentation and answer playback.
+    Used during both concept presentation and answer playback. When
+    ``level`` is provided (>= 0), the equalizer reflects actual audio
+    amplitude. Otherwise falls back to preset animation frames.
 
     Args:
         title: Content title (concept name or "Answer").
         speed: Current playback speed.
-        tick: Animation tick for equalizer.
+        tick: Animation tick for equalizer fallback.
         index: Zero-based concept index.
         total: Total number of concepts.
         is_answer: True if playing an answer (vs concept).
+        level: Audio RMS level (0.0-1.0). Negative = use preset frames.
 
     Returns:
         Styled Rich Panel with equalizer animation and key instructions.
     """
-    eq = get_equalizer_frame(tick)
+    eq = level_to_bars(level) if level >= 0 else get_equalizer_frame(tick)
     speed_label = SPEED_LABELS.get(speed, f"{speed}x")
 
     lines = Text()
@@ -107,15 +149,18 @@ def make_playback_panel(
     return Panel(lines, title=panel_title, border_style="green")
 
 
-def make_recording_animated_panel(state: RecordingState, tick: int = 0) -> Panel:
+def make_recording_animated_panel(
+    state: RecordingState, tick: int = 0, level: float = -1.0
+) -> Panel:
     """Create an animated recording panel with equalizer.
 
-    Shows equalizer animation when actively recording, static
-    text for other states.
+    Shows equalizer reflecting actual mic levels when ``level`` is
+    provided, falls back to preset animation otherwise.
 
     Args:
         state: Current recording state.
-        tick: Animation tick for equalizer.
+        tick: Animation tick for equalizer fallback.
+        level: Mic RMS level (0.0-1.0). Negative = use preset frames.
 
     Returns:
         Styled Rich Panel with recording state and animation.
@@ -123,7 +168,7 @@ def make_recording_animated_panel(state: RecordingState, tick: int = 0) -> Panel
     lines = Text()
 
     if state == RecordingState.RECORDING:
-        eq = get_equalizer_frame(tick)
+        eq = level_to_bars(level) if level >= 0 else get_equalizer_frame(tick)
         lines.append(f"  {eq}", style="bold red")
         lines.append("  RECORDING\n\n", style="bold red")
         lines.append("  Release to pause, ", style="dim")

@@ -170,6 +170,7 @@ class AudioRecorder:
         self,
         on_state_change: Callable[[RecordingState], None] | None = None,
         kb_monitor: KeyboardMonitor | None = None,
+        on_audio_level: Callable[[float], None] | None = None,
     ) -> AudioSegment:
         """Record audio using push-to-talk (hold SPACEBAR, press ENTER to finish).
 
@@ -182,6 +183,8 @@ class AudioRecorder:
                 transitions (IDLE -> RECORDING -> PAUSED -> DONE).
             kb_monitor: Optional pre-configured KeyboardMonitor (for testing).
                 If None, a new one is created with settings.key_release_timeout.
+            on_audio_level: Optional callback fired with RMS level (0.0-1.0)
+                on each audio block while recording.
 
         Returns:
             AudioSegment containing the captured audio data.
@@ -221,9 +224,14 @@ class AudioRecorder:
             time_info: object,
             status: Any,
         ) -> None:
-            """Audio stream callback — only collect frames when recording."""
+            """Audio stream callback — collect frames and report levels."""
             if monitor.recording_event.is_set():
                 self._frames.append(indata.copy())
+                if on_audio_level is not None:
+                    rms = float(np.sqrt(np.mean(indata**2)))
+                    # Normalize: typical speech RMS ~0.02-0.1, scale to 0-1
+                    level = min(1.0, rms * 10.0)
+                    on_audio_level(level)
 
         stream = sd.InputStream(
             samplerate=self.settings.sample_rate,

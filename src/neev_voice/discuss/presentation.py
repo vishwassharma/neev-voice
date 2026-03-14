@@ -406,22 +406,36 @@ class PresentationEngine:
         # Start playback at current speed
         effective_rate = int(sample_rate * self._playback_speed)
         sd.play(data, effective_rate)
+        playback_offset = 0  # tracks position for RMS after speed changes
 
         # Monitor keyboard while playing with animated panel
         monitor = KeyboardMonitor(mode=MonitorMode.PRESENTATION)
         monitor.start()
         console = Console()
         tick = 0
+        chunk_size = int(sample_rate * 0.05)  # ~50ms of audio per tick
+
+        def _get_playback_level() -> float:
+            """Compute RMS level from the audio chunk currently playing."""
+            pos = playback_offset + tick * chunk_size
+            if pos >= len(data):
+                return 0.0
+            chunk = data[pos : pos + chunk_size]
+            if len(chunk) == 0:
+                return 0.0
+            rms = float(np.sqrt(np.mean(chunk**2)))
+            return min(1.0, rms * 5.0)  # scale for visibility
 
         try:
             with Live(
                 make_playback_panel(
                     title=display_title,
                     speed=self._playback_speed,
-                    tick=tick,
+                    tick=0,
                     index=index,
                     total=total,
                     is_answer=is_answer,
+                    level=_get_playback_level(),
                 ),
                 console=console,
                 refresh_per_second=8,
@@ -436,6 +450,7 @@ class PresentationEngine:
                             index=index,
                             total=total,
                             is_answer=is_answer,
+                            level=_get_playback_level(),
                         )
                     )
 
@@ -457,9 +472,11 @@ class PresentationEngine:
                     if monitor.speed_changed_event.is_set():
                         monitor.speed_changed_event.clear()
                         self._playback_speed = monitor.playback_speed
-                        pos = sd.get_stream().read_available if sd.get_stream() else 0
+                        pos = playback_offset + tick * chunk_size
                         sd.stop()
                         remaining = data[pos:] if pos < len(data) else np.array([])
+                        playback_offset = pos
+                        tick = 0
                         if len(remaining) > 0:
                             effective_rate = int(sample_rate * self._playback_speed)
                             sd.play(remaining, effective_rate)

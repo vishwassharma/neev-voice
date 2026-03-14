@@ -143,24 +143,37 @@ class EnquiryEngine:
 
         recorder = AudioRecorder(settings=self.settings)
         console = Console()
-        tick = 0
+        current_level = 0.0
+        current_state = RecordingState.IDLE
 
         live = Live(
-            make_recording_animated_panel(RecordingState.IDLE, tick=0),
+            make_recording_animated_panel(RecordingState.IDLE),
             console=console,
             refresh_per_second=8,
         )
 
         def update_display(state: RecordingState) -> None:
-            """Update Rich Live display with animated recording state."""
-            nonlocal tick
-            tick += 1
-            live.update(make_recording_animated_panel(state, tick=tick))
+            """Update Rich Live display on state change."""
+            nonlocal current_state
+            current_state = state
+            live.update(make_recording_animated_panel(state, level=current_level))
+
+        def update_level(level: float) -> None:
+            """Update equalizer with real mic RMS level."""
+            nonlocal current_level
+            current_level = level
+            live.update(
+                make_recording_animated_panel(
+                    current_state,
+                    level=level,
+                )
+            )
 
         try:
             with live:
                 segment = await recorder.record_push_to_talk(
                     on_state_change=update_display,
+                    on_audio_level=update_level,
                 )
         except RecordingCancelledError:
             logger.info("voice_enquiry_cancelled")
