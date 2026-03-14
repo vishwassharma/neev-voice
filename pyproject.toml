@@ -1,6 +1,6 @@
 [project]
 name = "neev-voice"
-version = "0.9.3"
+dynamic = ["version"]
 description = "A Python CLI voice agent for Hindi-English mixed speech - listens, transcribes, extracts intent, and discusses plan documents."
 readme = {text = "", content-type = "text/markdown"}
 requires-python = ">=3.12"
@@ -27,6 +27,9 @@ neev = "neev_voice.cli:app"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/neev_voice/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/neev_voice"]
@@ -90,9 +93,12 @@ commit = false
 tag = false
 
 [[tool.bumpversion.files]]
-filename = "pyproject.toml"
-search = 'version = "{current_version}"'
-replace = 'version = "{new_version}"'
+filename = "src/neev_voice/__init__.py"
+search = '__version__ = "{current_version}"'
+replace = '__version__ = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "VERSION"
 
 [[tool.bumpversion.files]]
 filename = "README.md"

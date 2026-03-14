@@ -898,7 +898,6 @@ wheels = [
 
 [[package]]
 name = "neev-voice"
-version = "0.9.3"
 source = { editable = "." }
 dependencies = [
     { name = "claude-agent-sdk" },
