@@ -87,6 +87,15 @@ class TestPresentationEngine:
         """Engine initializes correctly."""
         engine = PresentationEngine(session, settings, prepare_dir=prepare_dir)
         assert engine.session is session
+        assert engine.on_concept_done is None
+
+    def test_init_with_callback(
+        self, session: SessionInfo, settings: MagicMock, prepare_dir: Path
+    ) -> None:
+        """Engine accepts on_concept_done callback."""
+        cb = MagicMock()
+        engine = PresentationEngine(session, settings, prepare_dir=prepare_dir, on_concept_done=cb)
+        assert engine.on_concept_done is cb
 
     def test_list_concepts(
         self, session: SessionInfo, settings: MagicMock, prepare_dir: Path
@@ -479,3 +488,58 @@ class TestPresentationEngineRun:
         result = await engine.run_answer("Some answer text")
 
         assert result.cancelled
+
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock, return_value=None)
+    async def test_on_concept_done_called_for_each_concept(
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """on_concept_done callback is called after each concept completes."""
+        cb = MagicMock()
+        engine = PresentationEngine(
+            session, settings, tts_provider=None, prepare_dir=prepare_dir, on_concept_done=cb
+        )
+        result = await engine.run()
+
+        assert result.completed
+        assert cb.call_count == 3
+        cb.assert_any_call(0)
+        cb.assert_any_call(1)
+        cb.assert_any_call(2)
+
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock)
+    async def test_on_concept_done_not_called_on_interrupt(
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """on_concept_done is not called when gate returns interrupted."""
+        mock_wait.return_value = PresentationResult(
+            interrupted=True,
+            state_data={"current_concept_index": 0, "total_concepts": 3},
+        )
+        cb = MagicMock()
+        engine = PresentationEngine(
+            session, settings, tts_provider=None, prepare_dir=prepare_dir, on_concept_done=cb
+        )
+        await engine.run()
+
+        cb.assert_not_called()
+
+    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock, return_value=None)
+    async def test_on_concept_done_none_callback_no_error(
+        self,
+        mock_wait: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        prepare_dir: Path,
+    ) -> None:
+        """No error when on_concept_done is None (default)."""
+        engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
+        result = await engine.run()
+        assert result.completed

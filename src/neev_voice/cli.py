@@ -37,6 +37,7 @@ from neev_voice.exceptions import NeevConfigError, NeevError, TranscriptRejected
 from neev_voice.log import configure_logging
 
 if TYPE_CHECKING:
+    from neev_voice.discuss.session import SessionManager
     from neev_voice.intent.extractor import ExtractedIntent
     from neev_voice.llm.agent import EnrichmentAgent
     from neev_voice.llm.enrichment_loop import EnrichmentLoopAgent
@@ -416,6 +417,10 @@ def discuss(
     stt: str | None = typer.Option(None, "--stt", help="STT provider"),
     tts: str | None = typer.Option(None, "--tts", help="TTS provider"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+    list_sessions: bool = typer.Option(False, "--list-sessions", help="List all discuss sessions"),
+    export_name: str | None = typer.Option(None, "--export", help="Export session to zip archive"),
+    import_zip: str | None = typer.Option(None, "--import", help="Import session from zip archive"),
+    migrate: bool = typer.Option(False, "--migrate", help="Migrate all sessions to latest schema"),
 ) -> None:
     """Interactive research discussion with state machine.
 
@@ -424,7 +429,15 @@ def discuss(
 
     Start a new session with ``--files``, resume with ``--continue``
     or ``--resume``, and control state with ``--reset`` / ``--enquery``.
+
+    Standalone actions: ``--list-sessions``, ``--export``, ``--import``,
+    ``--migrate``.
     """
+    # Handle standalone actions (no state machine entry)
+    if list_sessions or export_name or import_zip or migrate:
+        _discuss_standalone(list_sessions, export_name, import_zip, output, migrate)
+        return
+
     asyncio.run(
         _discuss_async(
             name,
@@ -440,6 +453,161 @@ def discuss(
             verbose,
         )
     )
+
+
+def _discuss_standalone(
+    list_sessions: bool,
+    export_name: str | None,
+    import_zip: str | None,
+    output: str | None,
+    migrate: bool = False,
+) -> None:
+    """Handle standalone discuss actions that don't enter the state machine.
+
+    Args:
+        list_sessions: Whether to list all sessions.
+        export_name: Session name to export, or None.
+        import_zip: Zip file path to import, or None.
+        output: Optional output directory for export.
+        migrate: Whether to migrate all sessions to latest schema.
+    """
+    from neev_voice.discuss.session import SessionManager
+
+    settings = _get_settings()
+    session_mgr = SessionManager(base_dir=Path(settings.discuss_base_dir))
+
+    if migrate:
+        _migrate_sessions(session_mgr)
+    elif list_sessions:
+        _list_sessions(session_mgr)
+    elif export_name:
+        _export_session(session_mgr, export_name, output)
+    elif import_zip:
+        _import_session(session_mgr, import_zip)
+
+
+def _list_sessions(session_mgr: SessionManager) -> None:
+    """Display all discuss sessions in a Rich table.
+
+    Args:
+        session_mgr: Session manager to query.
+    """
+    names = session_mgr.list_sessions()
+    if not names:
+        console.print("[dim]No sessions found.[/dim]")
+        return
+
+    table = Table(title="Discuss Sessions")
+    table.add_column("Name", style="bold")
+    table.add_column("State", style="cyan")
+    table.add_column("Concepts", justify="right")
+    table.add_column("Created", style="dim")
+    table.add_column("Updated", style="dim")
+
+    for name in names:
+        session = session_mgr.load_session(name)
+        if session is None:
+            continue
+        concept_count = str(len(session.concepts)) if session.concepts else "—"
+        created = session.created_at[:19].replace("T", " ")
+        updated = session.updated_at[:19].replace("T", " ")
+        table.add_row(session.name, session.state.value, concept_count, created, updated)
+
+    console.print(table)
+
+
+def _migrate_sessions(session_mgr: SessionManager) -> None:
+    """Migrate all sessions to the latest schema version.
+
+    Loads each session (which triggers auto-migration in load_session)
+    and reports the results.
+
+    Args:
+        session_mgr: Session manager to query.
+    """
+    from neev_voice.discuss.migration import CURRENT_SCHEMA_VERSION
+
+    names = session_mgr.list_sessions()
+    if not names:
+        console.print("[dim]No sessions found.[/dim]")
+        return
+
+    migrated_count = 0
+    for name in names:
+        # Read raw JSON to check version before load triggers migration
+        import json
+
+        session_file = session_mgr.session_file(name)
+        try:
+            raw = json.loads(session_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            console.print(f"  [red]skip[/red] {name} (corrupt session file)")
+            continue
+
+        old_version = raw.get("schema_version", 1)
+        if old_version >= CURRENT_SCHEMA_VERSION:
+            console.print(f"  [dim]ok[/dim]   {name} (v{old_version})")
+            continue
+
+        # load_session triggers migration + auto-save
+        session = session_mgr.load_session(name)
+        if session:
+            console.print(
+                f"  [green]migrated[/green] {name} (v{old_version} → v{session.schema_version})"
+            )
+            migrated_count += 1
+        else:
+            console.print(f"  [red]failed[/red]  {name}")
+
+    if migrated_count:
+        console.print(f"\n[bold green]Migrated {migrated_count} session(s).[/bold green]")
+    else:
+        console.print("\n[dim]All sessions are up to date.[/dim]")
+
+
+def _export_session(session_mgr: SessionManager, session_name: str, output: str | None) -> None:
+    """Export a session to a zip archive.
+
+    Args:
+        session_mgr: Session manager.
+        session_name: Name of the session to export.
+        output: Optional output directory for the zip file.
+    """
+    from neev_voice.discuss.portability import export_session as do_export
+
+    output_path = Path(output) if output else None
+    try:
+        zip_path = do_export(session_mgr, session_name, output_path=output_path)
+        console.print(f"[bold green]Exported:[/bold green] {zip_path}")
+    except FileNotFoundError:
+        console.print(f"[red]Error:[/red] Session '{session_name}' not found.")
+        raise typer.Exit(1) from None
+
+
+def _import_session(session_mgr: SessionManager, zip_path_str: str) -> None:
+    """Import a session from a zip archive.
+
+    Args:
+        session_mgr: Session manager.
+        zip_path_str: Path to the zip file.
+    """
+    from neev_voice.discuss.portability import import_session as do_import
+
+    zip_path = Path(zip_path_str)
+    try:
+        session = do_import(session_mgr, zip_path)
+        console.print(
+            f"[bold green]Imported:[/bold green] {session.name} (state: {session.state.value})"
+        )
+    except FileNotFoundError:
+        console.print(f"[red]Error:[/red] Zip file not found: {zip_path_str}")
+        raise typer.Exit(1) from None
+    except FileExistsError:
+        console.print("[red]Error:[/red] Session already exists. Delete it first.")
+        raise typer.Exit(1) from None
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] Invalid export file: {e}")
+        raise typer.Exit(1) from None
 
 
 def _find_git_root() -> Path:

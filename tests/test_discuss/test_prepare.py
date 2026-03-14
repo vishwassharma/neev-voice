@@ -278,22 +278,116 @@ This is the spoken version."""
         assert "Just plain text" in content
 
 
+class TestConceptContentExists:
+    """Tests for _concept_content_exists()."""
+
+    def test_all_files_exist(
+        self, session: SessionInfo, settings: MagicMock, tmp_path: Path
+    ) -> None:
+        """Returns True when tutorial, explainer, and transcript exist."""
+        engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
+        engine._ensure_dirs()
+
+        for subdir in ("tutorials", "explainers", "transcripts"):
+            (tmp_path / subdir / "000_test-concept.md").write_text("content")
+
+        assert engine._concept_content_exists(0) is True
+
+    def test_missing_transcript(
+        self, session: SessionInfo, settings: MagicMock, tmp_path: Path
+    ) -> None:
+        """Returns False when transcript is missing."""
+        engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
+        engine._ensure_dirs()
+
+        (tmp_path / "tutorials" / "000_test.md").write_text("content")
+        (tmp_path / "explainers" / "000_test.md").write_text("content")
+        # No transcript
+
+        assert engine._concept_content_exists(0) is False
+
+    def test_missing_all(self, session: SessionInfo, settings: MagicMock, tmp_path: Path) -> None:
+        """Returns False when no files exist."""
+        engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
+        engine._ensure_dirs()
+        assert engine._concept_content_exists(0) is False
+
+    def test_no_dirs(self, session: SessionInfo, settings: MagicMock, tmp_path: Path) -> None:
+        """Returns False when directories don't exist."""
+        engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
+        assert engine._concept_content_exists(0) is False
+
+    def test_different_indices(
+        self, session: SessionInfo, settings: MagicMock, tmp_path: Path
+    ) -> None:
+        """Only matches the correct index prefix."""
+        engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
+        engine._ensure_dirs()
+
+        # Create files for index 1, not index 0
+        for subdir in ("tutorials", "explainers", "transcripts"):
+            (tmp_path / subdir / "001_other.md").write_text("content")
+
+        assert engine._concept_content_exists(0) is False
+        assert engine._concept_content_exists(1) is True
+
+
 class TestPrepareEngineRun:
     """Tests for PrepareEngine.run() method."""
 
-    async def test_run_resumes_existing(
-        self, session: SessionInfo, settings: MagicMock, tmp_path: Path
+    @patch.object(PrepareEngine, "_generate_content")
+    async def test_run_resumes_existing_skips_completed(
+        self,
+        mock_generate: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        tmp_path: Path,
     ) -> None:
-        """run() returns existing concepts if concepts.json exists."""
+        """run() skips content generation for concepts with existing artifacts."""
         engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
-        tmp_path.mkdir(exist_ok=True)
-        concepts_file = tmp_path / "concepts.json"
-        concepts_file.write_text(
-            json.dumps([{"index": 0, "title": "Existing", "description": "D"}])
-        )
+        engine._ensure_dirs()
+
+        # Save concepts.json
+        concepts_data = [
+            {"index": 0, "title": "Done", "description": "D"},
+            {"index": 1, "title": "Pending", "description": "P"},
+        ]
+        (tmp_path / "concepts.json").write_text(json.dumps(concepts_data))
+
+        # Create all content for concept 0 (already done)
+        for subdir in ("tutorials", "explainers", "transcripts"):
+            (tmp_path / subdir / "000_done.md").write_text("existing content")
+
+        result = await engine.run()
+        assert len(result) == 2
+
+        # Only concept 1 should have _generate_content called
+        mock_generate.assert_called_once()
+        call_args = mock_generate.call_args
+        assert call_args[0][0].index == 1
+        assert call_args[0][0].title == "Pending"
+
+    @patch.object(PrepareEngine, "_generate_content")
+    async def test_run_resumes_all_complete(
+        self,
+        mock_generate: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """run() skips all content generation when everything exists."""
+        engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
+        engine._ensure_dirs()
+
+        concepts_data = [{"index": 0, "title": "Done", "description": "D"}]
+        (tmp_path / "concepts.json").write_text(json.dumps(concepts_data))
+
+        for subdir in ("tutorials", "explainers", "transcripts"):
+            (tmp_path / subdir / "000_done.md").write_text("existing")
+
         result = await engine.run()
         assert len(result) == 1
-        assert result[0].title == "Existing"
+        mock_generate.assert_not_called()
 
     async def test_run_no_documents(
         self, session: SessionInfo, settings: MagicMock, tmp_path: Path

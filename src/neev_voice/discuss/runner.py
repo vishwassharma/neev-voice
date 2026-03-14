@@ -144,17 +144,18 @@ class DiscussRunner:
 
         Presents concepts via TTS. On interrupt (SPACEBAR), pushes
         state to stack and transitions to ENQUIRY. On completion,
-        exits the loop.
+        exits the loop. Tracks progress via on_concept_done callback
+        for resume after interruption.
 
         Returns:
             True to continue, False to exit.
         """
         prepare_dir = self.session_manager.session_dir(self.session.name) / "prepare"
 
-        # Determine start index
-        start_index = 0
+        # Determine start index: prefer restored state, then persisted index
+        start_index = self.session.presentation_index
         if self._restored_state_data:
-            start_index = self._restored_state_data.get("current_concept_index", 0)
+            start_index = self._restored_state_data.get("current_concept_index", start_index)
             self._restored_state_data = None
 
         engine = PresentationEngine(
@@ -162,6 +163,7 @@ class DiscussRunner:
             settings=self.settings,
             tts_provider=self.tts_provider,
             prepare_dir=prepare_dir,
+            on_concept_done=self._on_concept_done,
         )
 
         result = await engine.run(start_index=start_index)
@@ -182,9 +184,22 @@ class DiscussRunner:
 
         if result.completed:
             logger.info("presentation_complete")
+            self.session.presentation_index = 0
+            self.session_manager.save_session(self.session)
             return False
 
         return True
+
+    def _on_concept_done(self, concept_index: int) -> None:
+        """Callback for presentation engine after each concept completes.
+
+        Persists the next concept index to session for resume support.
+
+        Args:
+            concept_index: Index of the concept that just completed.
+        """
+        self.session.presentation_index = concept_index + 1
+        self.session_manager.save_session(self.session)
 
     async def _handle_enquiry(self) -> bool:
         """Handle the ENQUIRY state.
