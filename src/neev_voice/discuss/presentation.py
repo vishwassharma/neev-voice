@@ -173,7 +173,12 @@ class PresentationEngine:
             if gate_result is not None:
                 return gate_result
 
-            result = await self._present_single(transcript, idx, total)
+            result = await self._present_single(
+                transcript,
+                idx,
+                total,
+                title=concept.get("title", f"Concept {idx}"),
+            )
 
             if result.interrupted:
                 result.state_data = {
@@ -279,13 +284,16 @@ class PresentationEngine:
         finally:
             monitor.stop()
 
-    async def _present_single(self, text: str, index: int, total: int) -> PresentationResult:
+    async def _present_single(
+        self, text: str, index: int, total: int, title: str = ""
+    ) -> PresentationResult:
         """Present a single piece of text via TTS with keyboard monitoring.
 
         Args:
             text: Text to synthesize and play.
             index: Current item index (for state saving).
             total: Total number of items.
+            title: Content title for playback panel display.
 
         Returns:
             PresentationResult for this segment.
@@ -301,7 +309,12 @@ class PresentationEngine:
 
         # Play audio with keyboard monitoring
         if audio_path:
-            return await self._play_interruptible(audio_path, index, total)
+            return await self._play_interruptible(
+                audio_path,
+                index,
+                total,
+                title=title,
+            )
 
         # No TTS — just log and continue
         logger.info("presentation_no_audio", index=index)
@@ -347,26 +360,29 @@ class PresentationEngine:
         return wav_path
 
     async def _play_interruptible(
-        self, audio_path: Path, index: int, total: int
+        self, audio_path: Path, index: int, total: int, title: str = ""
     ) -> PresentationResult:
-        """Play audio with interruptible keyboard monitoring.
+        """Play audio with Rich Live animated panel and keyboard monitoring.
 
+        Shows an equalizer animation with speed controls during playback.
         Converts non-WAV audio (e.g. MP3) to WAV before playback.
-        Monitors keyboard for SPACEBAR (interrupt), ENTER (skip),
-        or ESC (cancel).
 
         Args:
             audio_path: Path to the audio file to play.
             index: Current concept index.
             total: Total number of concepts.
+            title: Content title for display panel.
 
         Returns:
             PresentationResult based on user interaction.
         """
         import sounddevice as sd
+        from rich.console import Console
+        from rich.live import Live
         from scipy.io import wavfile
 
         from neev_voice.audio.keyboard import KeyboardMonitor, MonitorMode
+        from neev_voice.discuss.tui import make_playback_panel
 
         audio_path = await self._ensure_wav(audio_path)
 
@@ -384,46 +400,73 @@ class PresentationEngine:
         elif data.dtype == np.int32:
             data = data.astype(np.float32) / 2147483648.0
 
+        is_answer = not title
+        display_title = title or "Answer"
+
         # Start playback at current speed
         effective_rate = int(sample_rate * self._playback_speed)
         sd.play(data, effective_rate)
 
-        # Monitor keyboard while playing
+        # Monitor keyboard while playing with animated panel
         monitor = KeyboardMonitor(mode=MonitorMode.PRESENTATION)
         monitor.start()
+        console = Console()
+        tick = 0
 
         try:
-            while sd.get_stream().active:
-                if monitor.interrupted_event.wait(timeout=0.05):
-                    sd.stop()
-                    return PresentationResult(
-                        interrupted=True,
-                        state_data={
-                            "current_concept_index": index,
-                            "total_concepts": total,
-                        },
+            with Live(
+                make_playback_panel(
+                    title=display_title,
+                    speed=self._playback_speed,
+                    tick=tick,
+                    index=index,
+                    total=total,
+                    is_answer=is_answer,
+                ),
+                console=console,
+                refresh_per_second=8,
+            ) as live:
+                while sd.get_stream().active:
+                    tick += 1
+                    live.update(
+                        make_playback_panel(
+                            title=display_title,
+                            speed=self._playback_speed,
+                            tick=tick,
+                            index=index,
+                            total=total,
+                            is_answer=is_answer,
+                        )
                     )
-                if monitor.done_event.wait(timeout=0.0):
-                    sd.stop()
-                    return PresentationResult(completed=False)  # skip to next
-                if monitor.cancelled_event.wait(timeout=0.0):
-                    sd.stop()
-                    return PresentationResult(cancelled=True)
-                if monitor.speed_changed_event.is_set():
-                    # Restart playback at new speed from current position
-                    monitor.speed_changed_event.clear()
-                    self._playback_speed = monitor.playback_speed
-                    pos = sd.get_stream().read_available if sd.get_stream() else 0
-                    sd.stop()
-                    remaining = data[pos:] if pos < len(data) else np.array([])
-                    if len(remaining) > 0:
-                        effective_rate = int(sample_rate * self._playback_speed)
-                        sd.play(remaining, effective_rate)
-                    else:
-                        break
-                    logger.debug("playback_speed_changed", speed=self._playback_speed)
+
+                    if monitor.interrupted_event.wait(timeout=0.05):
+                        sd.stop()
+                        return PresentationResult(
+                            interrupted=True,
+                            state_data={
+                                "current_concept_index": index,
+                                "total_concepts": total,
+                            },
+                        )
+                    if monitor.done_event.wait(timeout=0.0):
+                        sd.stop()
+                        return PresentationResult(completed=False)
+                    if monitor.cancelled_event.wait(timeout=0.0):
+                        sd.stop()
+                        return PresentationResult(cancelled=True)
+                    if monitor.speed_changed_event.is_set():
+                        monitor.speed_changed_event.clear()
+                        self._playback_speed = monitor.playback_speed
+                        pos = sd.get_stream().read_available if sd.get_stream() else 0
+                        sd.stop()
+                        remaining = data[pos:] if pos < len(data) else np.array([])
+                        if len(remaining) > 0:
+                            effective_rate = int(sample_rate * self._playback_speed)
+                            sd.play(remaining, effective_rate)
+                        else:
+                            break
         finally:
             monitor.stop()
 
         # Playback completed naturally
-        return PresentationResult(completed=False)  # move to next concept
+        return PresentationResult(completed=False)

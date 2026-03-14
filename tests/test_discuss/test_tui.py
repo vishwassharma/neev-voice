@@ -12,13 +12,17 @@ from neev_voice.audio.keyboard import RecordingState
 from neev_voice.discuss.session import SessionManager
 from neev_voice.discuss.state import DiscussState
 from neev_voice.discuss.tui import (
+    EQUALIZER_FRAMES,
     DiscussTUI,
+    get_equalizer_frame,
     make_answer_panel,
     make_answer_text_panel,
     make_enquiry_panel,
+    make_playback_panel,
     make_prepare_enquiry_panel,
     make_prepare_panel,
     make_presentation_panel,
+    make_recording_animated_panel,
     make_recording_panel,
 )
 
@@ -215,6 +219,99 @@ class TestMakeAnswerTextPanel:
         """Panel title is Answer."""
         panel = make_answer_text_panel("text")
         assert panel.title == "Answer"
+
+
+class TestEqualizer:
+    """Tests for equalizer animation."""
+
+    def test_frames_not_empty(self) -> None:
+        """Frames list is not empty."""
+        assert len(EQUALIZER_FRAMES) > 0
+
+    def test_get_frame_cycles(self) -> None:
+        """get_equalizer_frame cycles through frames."""
+        f0 = get_equalizer_frame(0)
+        f1 = get_equalizer_frame(1)
+        assert f0 != f1
+        # Wraps around
+        assert get_equalizer_frame(len(EQUALIZER_FRAMES)) == f0
+
+
+class TestMakePlaybackPanel:
+    """Tests for make_playback_panel."""
+
+    def test_returns_panel(self) -> None:
+        """Returns a Rich Panel."""
+        panel = make_playback_panel(title="Test", speed=1.0, tick=0)
+        assert isinstance(panel, Panel)
+
+    def test_shows_equalizer(self) -> None:
+        """Panel shows equalizer characters."""
+        panel = make_playback_panel(title="T", tick=0)
+        text = panel.renderable.plain
+        assert "▁" in text or "▃" in text or "▅" in text or "▇" in text
+
+    def test_shows_speed(self) -> None:
+        """Panel shows current speed."""
+        panel = make_playback_panel(title="T", speed=1.5, tick=0)
+        assert "1.5x" in panel.renderable.plain
+
+    def test_shows_speed_keys(self) -> None:
+        """Panel shows 1-4 speed key instructions."""
+        panel = make_playback_panel(title="T", tick=0)
+        text = panel.renderable.plain
+        assert "1x" in text
+        assert "1.25x" in text
+        assert "2x" in text
+
+    def test_concept_title(self) -> None:
+        """Concept panel shows Playing x/y title."""
+        panel = make_playback_panel(title="T", index=1, total=5, tick=0)
+        assert "2/5" in panel.title
+
+    def test_answer_title(self) -> None:
+        """Answer panel title says Answer."""
+        panel = make_playback_panel(title="T", is_answer=True, tick=0)
+        assert panel.title == "Answer"
+
+    def test_shows_action_keys(self) -> None:
+        """Panel shows SPACE, ENTER, ESC keys."""
+        panel = make_playback_panel(title="T", tick=0)
+        text = panel.renderable.plain
+        assert "SPACE" in text
+        assert "ENTER" in text
+        assert "ESC" in text
+
+
+class TestMakeRecordingAnimatedPanel:
+    """Tests for make_recording_animated_panel."""
+
+    def test_recording_shows_equalizer(self) -> None:
+        """Recording state shows equalizer animation."""
+        panel = make_recording_animated_panel(RecordingState.RECORDING, tick=0)
+        text = panel.renderable.plain
+        assert "RECORDING" in text
+        assert "▁" in text or "▃" in text or "▅" in text or "▇" in text
+
+    def test_recording_red_border(self) -> None:
+        """Recording state has red border."""
+        panel = make_recording_animated_panel(RecordingState.RECORDING)
+        assert panel.border_style == "red"
+
+    def test_paused_no_equalizer(self) -> None:
+        """Paused state shows PAUSED without equalizer."""
+        panel = make_recording_animated_panel(RecordingState.PAUSED)
+        assert "PAUSED" in panel.renderable.plain
+
+    def test_idle_shows_instructions(self) -> None:
+        """Idle state shows SPACEBAR instruction."""
+        panel = make_recording_animated_panel(RecordingState.IDLE)
+        assert "SPACEBAR" in panel.renderable.plain
+
+    def test_done_shows_captured(self) -> None:
+        """Done state shows captured."""
+        panel = make_recording_animated_panel(RecordingState.DONE)
+        assert "Captured" in panel.renderable.plain
 
 
 class TestDiscussTUI:

@@ -135,7 +135,7 @@ class EnquiryEngine:
         from rich.live import Live
 
         from neev_voice.audio.keyboard import RecordingState
-        from neev_voice.discuss.tui import make_recording_panel
+        from neev_voice.discuss.tui import make_recording_animated_panel
 
         if self.stt_provider is None:
             logger.warning("no_stt_provider_for_voice_enquiry")
@@ -143,16 +143,19 @@ class EnquiryEngine:
 
         recorder = AudioRecorder(settings=self.settings)
         console = Console()
+        tick = 0
 
         live = Live(
-            make_recording_panel(RecordingState.IDLE),
+            make_recording_animated_panel(RecordingState.IDLE, tick=0),
             console=console,
-            refresh_per_second=4,
+            refresh_per_second=8,
         )
 
         def update_display(state: RecordingState) -> None:
-            """Update Rich Live display with recording state."""
-            live.update(make_recording_panel(state))
+            """Update Rich Live display with animated recording state."""
+            nonlocal tick
+            tick += 1
+            live.update(make_recording_animated_panel(state, tick=tick))
 
         try:
             with live:

@@ -19,13 +19,138 @@ if TYPE_CHECKING:
     from neev_voice.discuss.runner import DiscussRunner
 
 __all__ = [
+    "EQUALIZER_FRAMES",
     "DiscussTUI",
+    "get_equalizer_frame",
     "make_answer_panel",
+    "make_answer_text_panel",
     "make_enquiry_panel",
+    "make_playback_panel",
     "make_prepare_panel",
     "make_presentation_panel",
+    "make_recording_animated_panel",
     "make_recording_panel",
 ]
+
+EQUALIZER_FRAMES = [
+    "▁ ▃ ▅ ▇ ▅ ▃ ▁",
+    "▃ ▅ ▇ ▅ ▃ ▁ ▃",
+    "▅ ▇ ▅ ▃ ▁ ▃ ▅",
+    "▇ ▅ ▃ ▁ ▃ ▅ ▇",
+    "▅ ▃ ▁ ▃ ▅ ▇ ▅",
+    "▃ ▁ ▃ ▅ ▇ ▅ ▃",
+]
+"""Unicode block character frames for equalizer animation."""
+
+SPEED_LABELS = {1.0: "1x", 1.25: "1.25x", 1.5: "1.5x", 2.0: "2x"}
+"""Display labels for playback speeds."""
+
+
+def get_equalizer_frame(tick: int) -> str:
+    """Get the equalizer animation frame for a given tick.
+
+    Args:
+        tick: Animation tick counter (increments each refresh).
+
+    Returns:
+        Unicode equalizer bar string for the current frame.
+    """
+    return EQUALIZER_FRAMES[tick % len(EQUALIZER_FRAMES)]
+
+
+def make_playback_panel(
+    title: str = "Answer",
+    speed: float = 1.0,
+    tick: int = 0,
+    index: int = 0,
+    total: int = 1,
+    is_answer: bool = False,
+) -> Panel:
+    """Create an animated playback panel with equalizer and speed controls.
+
+    Used during both concept presentation and answer playback.
+
+    Args:
+        title: Content title (concept name or "Answer").
+        speed: Current playback speed.
+        tick: Animation tick for equalizer.
+        index: Zero-based concept index.
+        total: Total number of concepts.
+        is_answer: True if playing an answer (vs concept).
+
+    Returns:
+        Styled Rich Panel with equalizer animation and key instructions.
+    """
+    eq = get_equalizer_frame(tick)
+    speed_label = SPEED_LABELS.get(speed, f"{speed}x")
+
+    lines = Text()
+    lines.append(f"  {eq}", style="bold green")
+    lines.append(f"  {speed_label}\n", style="bold cyan")
+    lines.append(f"  {title}\n\n", style="bold")
+    lines.append("  SPACE ", style="bold yellow")
+    lines.append("ask  ", style="dim")
+    lines.append("ENTER ", style="bold green")
+    lines.append("skip  ", style="dim")
+    lines.append("ESC ", style="bold red")
+    lines.append("cancel\n", style="dim")
+    lines.append("  1 ", style="bold cyan")
+    lines.append("1x  ", style="dim")
+    lines.append("2 ", style="bold cyan")
+    lines.append("1.25x  ", style="dim")
+    lines.append("3 ", style="bold cyan")
+    lines.append("1.5x  ", style="dim")
+    lines.append("4 ", style="bold cyan")
+    lines.append("2x", style="dim")
+
+    panel_title = "Answer" if is_answer else f"Playing {index + 1}/{total}"
+    return Panel(lines, title=panel_title, border_style="green")
+
+
+def make_recording_animated_panel(state: RecordingState, tick: int = 0) -> Panel:
+    """Create an animated recording panel with equalizer.
+
+    Shows equalizer animation when actively recording, static
+    text for other states.
+
+    Args:
+        state: Current recording state.
+        tick: Animation tick for equalizer.
+
+    Returns:
+        Styled Rich Panel with recording state and animation.
+    """
+    lines = Text()
+
+    if state == RecordingState.RECORDING:
+        eq = get_equalizer_frame(tick)
+        lines.append(f"  {eq}", style="bold red")
+        lines.append("  RECORDING\n\n", style="bold red")
+        lines.append("  Release to pause, ", style="dim")
+        lines.append("ENTER ", style="bold green")
+        lines.append("send, ", style="dim")
+        lines.append("ESC ", style="bold red")
+        lines.append("cancel", style="dim")
+    elif state == RecordingState.PAUSED:
+        lines.append("  PAUSED\n\n", style="bold yellow")
+        lines.append("  Hold ", style="dim")
+        lines.append("SPACEBAR ", style="bold yellow")
+        lines.append("to continue, ", style="dim")
+        lines.append("ENTER ", style="bold green")
+        lines.append("send, ", style="dim")
+        lines.append("ESC ", style="bold red")
+        lines.append("cancel", style="dim")
+    elif state == RecordingState.DONE:
+        lines.append("  Captured! Processing...", style="bold green")
+    elif state == RecordingState.CANCELLED:
+        lines.append("  Cancelled.", style="bold dim")
+    else:
+        lines.append("  Hold ", style="dim")
+        lines.append("SPACEBAR ", style="bold yellow")
+        lines.append("to record", style="dim")
+
+    border = "red" if state == RecordingState.RECORDING else "cyan"
+    return Panel(lines, title="Voice Recording", border_style=border)
 
 
 def make_prepare_panel() -> Panel:
