@@ -9,9 +9,10 @@ Neev Voice is a Python CLI voice agent for Hindi-English mixed speech. It record
 ## Setup
 
 ```bash
-uv sync --group dev          # install all dependencies
-pre-commit install           # install git hooks
-cp .env.example .env         # configure API keys
+uv sync --group dev                    # install all dependencies
+pre-commit install                     # install commit hooks
+pre-commit install --hook-type pre-push  # install push hooks (changelog check)
+cp .env.example .env                   # configure API keys
 ```
 
 ## Build & Test
