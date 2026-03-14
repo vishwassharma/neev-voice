@@ -227,10 +227,13 @@ class DiscussRunner:
             snapshot = self.session.state_stack.pop()
             if snapshot:
                 self._restore_state(snapshot)
-            else:
-                # No state to restore — go back to presentation
+                return True
+            # No state to restore
+            if self.session.concepts:
                 self._transition(DiscussState.PRESENTATION)
-            return True
+                return True
+            # Enquiry-only mode (no concepts) — exit
+            return False
 
         if result.query:
             self._current_enquiry = result
@@ -293,12 +296,14 @@ class DiscussRunner:
         """
         if not self._current_answer:
             logger.warning("presentation_enquiry_no_answer")
-            # Pop back to presentation
+            # Pop back to previous state
             snapshot = self.session.state_stack.pop()
             if snapshot:
                 self._restore_state(snapshot)
-            else:
+            elif self.session.concepts:
                 self._transition(DiscussState.PRESENTATION)
+            else:
+                self._transition(DiscussState.ENQUIRY)
             return True
 
         prepare_dir = self.session_manager.session_dir(self.session.name) / "prepare"
@@ -329,13 +334,17 @@ class DiscussRunner:
         if result.cancelled:
             return False
 
-        # Answer presented (ENTER or completed) — pop stack, return to presentation
+        # Answer presented (ENTER or completed) — pop stack, return to previous state
         snapshot = self.session.state_stack.pop()
         if snapshot and snapshot.state == DiscussState.PRESENTATION:
             self._restore_state(snapshot)
-        else:
+            return True
+        if self.session.concepts:
             self._transition(DiscussState.PRESENTATION)
-        return True
+            return True
+        # Enquiry-only mode — answer done, exit
+        logger.info("enquiry_only_complete")
+        return False
 
     def _transition(self, new_state: DiscussState) -> None:
         """Transition to a new state with validation and persistence.

@@ -687,14 +687,13 @@ async def _discuss_async(
         console.print(f"[dim]Continuing session: {session.name}[/dim]")
     else:
         # New session
-        if not files:
-            console.print("[red]Error:[/red] --files is required for new sessions.")
-            raise typer.Exit(1)
-
-        files_path = Path(files)
-        if not files_path.exists():
-            console.print(f"[red]Error:[/red] Research path not found: {files}")
-            raise typer.Exit(1)
+        research_path = ""
+        if files:
+            files_path = Path(files)
+            if not files_path.exists():
+                console.print(f"[red]Error:[/red] Research path not found: {files}")
+                raise typer.Exit(1)
+            research_path = str(files_path.resolve())
 
         session_name = name or generate_session_name()
         source_path = source or str(_find_git_root())
@@ -703,7 +702,7 @@ async def _discuss_async(
         try:
             session = session_mgr.create_session(
                 session_name,
-                research_path=str(files_path.resolve()),
+                research_path=research_path,
                 source_path=source_path,
                 output_path=output_path,
             )
@@ -713,6 +712,11 @@ async def _discuss_async(
                 "Use --resume to resume it."
             )
             raise typer.Exit(1) from None
+
+        # Without research files, start directly in enquiry mode
+        if not files:
+            session.state = DiscussState.ENQUIRY
+            session_mgr.save_session(session)
 
         console.print(f"[bold]Created session:[/bold] {session_name}")
 

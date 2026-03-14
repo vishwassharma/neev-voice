@@ -353,23 +353,39 @@ class TestHandleEnquiry:
         assert runner._restored_state_data == {"current_concept_index": 1}
 
     @patch("neev_voice.discuss.runner.EnquiryEngine")
-    async def test_enquiry_escaped_empty_stack(
+    async def test_enquiry_escaped_empty_stack_with_concepts(
         self,
         mock_engine_cls: MagicMock,
         runner: DiscussRunner,
     ) -> None:
-        """Escaped enquiry with empty stack goes to PRESENTATION."""
+        """Escaped enquiry with empty stack goes to PRESENTATION when concepts exist."""
         runner.session.state = DiscussState.ENQUIRY
+        runner.session.concepts = [{"title": "C1"}]
 
         mock_engine = MagicMock()
         mock_engine.run = AsyncMock(return_value=EnquiryResult(escaped=True))
         mock_engine_cls.return_value = mock_engine
 
-        # Need to set state to allow transition
-        # Enquiry → Presentation is valid
         result = await runner._handle_enquiry()
         assert result is True
         assert runner.session.state == DiscussState.PRESENTATION
+
+    @patch("neev_voice.discuss.runner.EnquiryEngine")
+    async def test_enquiry_escaped_empty_stack_no_concepts_exits(
+        self,
+        mock_engine_cls: MagicMock,
+        runner: DiscussRunner,
+    ) -> None:
+        """Escaped enquiry with empty stack exits when no concepts (enquiry-only mode)."""
+        runner.session.state = DiscussState.ENQUIRY
+        runner.session.concepts = None
+
+        mock_engine = MagicMock()
+        mock_engine.run = AsyncMock(return_value=EnquiryResult(escaped=True))
+        mock_engine_cls.return_value = mock_engine
+
+        result = await runner._handle_enquiry()
+        assert result is False
 
     @patch("neev_voice.discuss.runner.EnquiryEngine")
     async def test_enquiry_with_query(
@@ -577,6 +593,64 @@ class TestHandlePresentationEnquiry:
         result = await runner._handle_presentation_enquiry()
         assert result is False
 
+    @patch("neev_voice.discuss.runner.PresentationEngine")
+    async def test_presentation_enquiry_completed_no_concepts_exits(
+        self,
+        mock_engine_cls: MagicMock,
+        runner: DiscussRunner,
+    ) -> None:
+        """Completed answer in enquiry-only mode (no concepts) exits."""
+        runner.session.state = DiscussState.PRESENTATION_ENQUIRY
+        runner._current_answer = "The answer"
+        runner.session.concepts = None
+
+        mock_engine = MagicMock()
+        mock_engine.run_answer = AsyncMock(return_value=PresentationResult(completed=True))
+        mock_engine_cls.return_value = mock_engine
+
+        result = await runner._handle_presentation_enquiry()
+        assert result is False
+
+    @patch("neev_voice.discuss.runner.PresentationEngine")
+    async def test_presentation_enquiry_completed_with_concepts_goes_presentation(
+        self,
+        mock_engine_cls: MagicMock,
+        runner: DiscussRunner,
+    ) -> None:
+        """Completed answer with concepts (no stack) goes to PRESENTATION."""
+        runner.session.state = DiscussState.PRESENTATION_ENQUIRY
+        runner._current_answer = "The answer"
+        runner.session.concepts = [{"title": "C1"}]
+
+        mock_engine = MagicMock()
+        mock_engine.run_answer = AsyncMock(return_value=PresentationResult(completed=True))
+        mock_engine_cls.return_value = mock_engine
+
+        result = await runner._handle_presentation_enquiry()
+        assert result is True
+        assert runner.session.state == DiscussState.PRESENTATION
+
+    @patch("neev_voice.discuss.runner.PresentationEngine")
+    async def test_presentation_enquiry_interrupted_goes_enquiry(
+        self,
+        mock_engine_cls: MagicMock,
+        runner: DiscussRunner,
+    ) -> None:
+        """SPACE during answer in enquiry-only mode goes to ENQUIRY for follow-up."""
+        runner.session.state = DiscussState.PRESENTATION_ENQUIRY
+        runner._current_answer = "The answer"
+        runner.session.concepts = None
+
+        mock_engine = MagicMock()
+        mock_engine.run_answer = AsyncMock(
+            return_value=PresentationResult(interrupted=True, state_data={"pos": 1})
+        )
+        mock_engine_cls.return_value = mock_engine
+
+        result = await runner._handle_presentation_enquiry()
+        assert result is True
+        assert runner.session.state == DiscussState.ENQUIRY
+
 
 class TestRunIntegration:
     """Integration tests for the full state machine loop."""
@@ -643,4 +717,108 @@ class TestRunIntegration:
         await runner.run()
 
         assert mock_pres.run.call_count == 2
+        mock_enq.run.assert_called_once()
+
+    @patch("neev_voice.discuss.runner.PresentationEngine")
+    @patch("neev_voice.discuss.runner.PrepareEnquiryEngine")
+    @patch("neev_voice.discuss.runner.EnquiryEngine")
+    async def test_enquiry_only_full_flow(
+        self,
+        mock_enq_cls: MagicMock,
+        mock_prep_enq_cls: MagicMock,
+        mock_pres_cls: MagicMock,
+        runner: DiscussRunner,
+    ) -> None:
+        """Enquiry-only flow: enquiry → prepare-enquiry → presentation-enquiry → exit."""
+        # Start in ENQUIRY with no concepts
+        runner.session.state = DiscussState.ENQUIRY
+        runner.session.concepts = None
+
+        # Enquiry: user asks a question
+        mock_enq = MagicMock()
+        mock_enq.run = AsyncMock(
+            return_value=EnquiryResult(escaped=False, query="What is X?", source="manual")
+        )
+        mock_enq_cls.return_value = mock_enq
+
+        # PrepareEnquiry: research answer
+        mock_prep_enq = MagicMock()
+        mock_prep_enq.run = AsyncMock(return_value="X is a pattern.")
+        mock_prep_enq_cls.return_value = mock_prep_enq
+
+        # PresentationEnquiry: answer finishes (ENTER/completed) → exit
+        mock_pres = MagicMock()
+        mock_pres.run_answer = AsyncMock(return_value=PresentationResult(completed=True))
+        mock_pres_cls.return_value = mock_pres
+
+        await runner.run()
+
+        mock_enq.run.assert_called_once()
+        mock_prep_enq.run.assert_called_once()
+        mock_pres.run_answer.assert_called_once_with("X is a pattern.")
+
+    @patch("neev_voice.discuss.runner.PresentationEngine")
+    @patch("neev_voice.discuss.runner.PrepareEnquiryEngine")
+    @patch("neev_voice.discuss.runner.EnquiryEngine")
+    async def test_enquiry_only_space_reenter(
+        self,
+        mock_enq_cls: MagicMock,
+        mock_prep_enq_cls: MagicMock,
+        mock_pres_cls: MagicMock,
+        runner: DiscussRunner,
+    ) -> None:
+        """Enquiry-only: SPACE during answer → enquiry → ESC → back to pres-enquiry → exit."""
+        runner.session.state = DiscussState.ENQUIRY
+        runner.session.concepts = None
+
+        # First enquiry: ask question
+        # Second enquiry: ESC → pops stack → back to presentation-enquiry
+        mock_enq = MagicMock()
+        mock_enq.run = AsyncMock(
+            side_effect=[
+                EnquiryResult(escaped=False, query="Q1?", source="manual"),
+                EnquiryResult(escaped=True),
+            ]
+        )
+        mock_enq_cls.return_value = mock_enq
+
+        # PrepareEnquiry
+        mock_prep_enq = MagicMock()
+        mock_prep_enq.run = AsyncMock(return_value="Answer 1.")
+        mock_prep_enq_cls.return_value = mock_prep_enq
+
+        # PresentationEnquiry:
+        # 1st call: SPACE interrupts → pushes state, goes to enquiry
+        # 2nd call: after ESC pops stack, answer completes → exit (no concepts)
+        mock_pres = MagicMock()
+        mock_pres.run_answer = AsyncMock(
+            side_effect=[
+                PresentationResult(interrupted=True, state_data={"pos": 0}),
+                PresentationResult(completed=True),
+            ]
+        )
+        mock_pres_cls.return_value = mock_pres
+
+        await runner.run()
+
+        assert mock_enq.run.call_count == 2
+        mock_prep_enq.run.assert_called_once()
+        assert mock_pres.run_answer.call_count == 2
+
+    @patch("neev_voice.discuss.runner.EnquiryEngine")
+    async def test_enquiry_only_esc_immediately(
+        self,
+        mock_enq_cls: MagicMock,
+        runner: DiscussRunner,
+    ) -> None:
+        """Enquiry-only: ESC immediately exits."""
+        runner.session.state = DiscussState.ENQUIRY
+        runner.session.concepts = None
+
+        mock_enq = MagicMock()
+        mock_enq.run = AsyncMock(return_value=EnquiryResult(escaped=True))
+        mock_enq_cls.return_value = mock_enq
+
+        await runner.run()
+
         mock_enq.run.assert_called_once()
