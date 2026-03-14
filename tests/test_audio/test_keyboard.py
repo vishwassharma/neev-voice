@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from neev_voice.audio.keyboard import KeyboardMonitor, RecordingState
+from neev_voice.audio.keyboard import KeyboardMonitor, MonitorMode, RecordingState
 
 
 class FakeTTYStream:
@@ -497,3 +497,207 @@ class TestKeyboardMonitorContextManager:
             assert isinstance(monitor, KeyboardMonitor)
             fake_stdin.send_key("\n")
             time.sleep(0.1)
+
+
+class TestMonitorMode:
+    """Tests for MonitorMode enum."""
+
+    def test_recording_mode_value(self):
+        """Test RECORDING mode string value."""
+        assert MonitorMode.RECORDING.value == "recording"
+
+    def test_presentation_mode_value(self):
+        """Test PRESENTATION mode string value."""
+        assert MonitorMode.PRESENTATION.value == "presentation"
+
+    def test_default_mode_is_recording(self, fake_stdin):
+        """Test default monitor mode is RECORDING."""
+        monitor = KeyboardMonitor(stdin=fake_stdin)
+        assert monitor.mode == MonitorMode.RECORDING
+
+
+class TestKeyboardMonitorManualKey:
+    """Tests for M key detection in RECORDING mode."""
+
+    @patch("neev_voice.audio.keyboard.termios")
+    @patch("neev_voice.audio.keyboard.tty")
+    def test_m_sets_manual_event(self, mock_tty, mock_termios, fake_stdin):
+        """Test pressing M sets the manual event."""
+        monitor = KeyboardMonitor(stdin=fake_stdin)
+        monitor.start()
+
+        try:
+            fake_stdin.send_key("m")
+            time.sleep(0.1)
+            assert monitor.manual_event.is_set()
+        finally:
+            monitor.stop()
+
+    @patch("neev_voice.audio.keyboard.termios")
+    @patch("neev_voice.audio.keyboard.tty")
+    def test_uppercase_m_sets_manual_event(self, mock_tty, mock_termios, fake_stdin):
+        """Test pressing uppercase M also sets the manual event."""
+        monitor = KeyboardMonitor(stdin=fake_stdin)
+        monitor.start()
+
+        try:
+            fake_stdin.send_key("M")
+            time.sleep(0.1)
+            assert monitor.manual_event.is_set()
+        finally:
+            monitor.stop()
+
+    @patch("neev_voice.audio.keyboard.termios")
+    @patch("neev_voice.audio.keyboard.tty")
+    def test_m_clears_recording(self, mock_tty, mock_termios, fake_stdin):
+        """Test M key clears recording event if currently recording."""
+        monitor = KeyboardMonitor(stdin=fake_stdin, release_timeout=0.5)
+        monitor.start()
+
+        try:
+            fake_stdin.send_key(" ")
+            time.sleep(0.05)
+            assert monitor.recording_event.is_set()
+
+            fake_stdin.send_key("m")
+            time.sleep(0.1)
+            assert not monitor.recording_event.is_set()
+            assert monitor.manual_event.is_set()
+        finally:
+            monitor.stop()
+
+    @patch("neev_voice.audio.keyboard.termios")
+    @patch("neev_voice.audio.keyboard.tty")
+    def test_m_fires_callback(self, mock_tty, mock_termios, fake_stdin):
+        """Test M key fires on_manual callback."""
+        called = []
+        monitor = KeyboardMonitor(
+            stdin=fake_stdin,
+            on_manual=lambda: called.append(True),
+        )
+        monitor.start()
+
+        try:
+            fake_stdin.send_key("m")
+            time.sleep(0.1)
+            assert len(called) == 1
+        finally:
+            monitor.stop()
+
+    @patch("neev_voice.audio.keyboard.termios")
+    @patch("neev_voice.audio.keyboard.tty")
+    def test_manual_event_not_set_initially(self, mock_tty, mock_termios, fake_stdin):
+        """Test manual_event is not set initially."""
+        monitor = KeyboardMonitor(stdin=fake_stdin)
+        assert not monitor.manual_event.is_set()
+
+
+class TestKeyboardMonitorPresentationMode:
+    """Tests for PRESENTATION monitor mode."""
+
+    @patch("neev_voice.audio.keyboard.termios")
+    @patch("neev_voice.audio.keyboard.tty")
+    def test_spacebar_sets_interrupted(self, mock_tty, mock_termios, fake_stdin):
+        """Test spacebar tap sets interrupted_event in PRESENTATION mode."""
+        monitor = KeyboardMonitor(stdin=fake_stdin, mode=MonitorMode.PRESENTATION)
+        monitor.start()
+
+        try:
+            fake_stdin.send_key(" ")
+            time.sleep(0.1)
+            assert monitor.interrupted_event.is_set()
+            # Should NOT set recording_event
+            assert not monitor.recording_event.is_set()
+        finally:
+            monitor.stop()
+
+    @patch("neev_voice.audio.keyboard.termios")
+    @patch("neev_voice.audio.keyboard.tty")
+    def test_spacebar_fires_interrupt_callback(self, mock_tty, mock_termios, fake_stdin):
+        """Test spacebar fires on_interrupt callback in PRESENTATION mode."""
+        called = []
+        monitor = KeyboardMonitor(
+            stdin=fake_stdin,
+            mode=MonitorMode.PRESENTATION,
+            on_interrupt=lambda: called.append(True),
+        )
+        monitor.start()
+
+        try:
+            fake_stdin.send_key(" ")
+            time.sleep(0.1)
+            assert len(called) == 1
+        finally:
+            monitor.stop()
+
+    @patch("neev_voice.audio.keyboard.termios")
+    @patch("neev_voice.audio.keyboard.tty")
+    def test_enter_sets_done(self, mock_tty, mock_termios, fake_stdin):
+        """Test ENTER sets done_event in PRESENTATION mode."""
+        monitor = KeyboardMonitor(stdin=fake_stdin, mode=MonitorMode.PRESENTATION)
+        monitor.start()
+
+        try:
+            fake_stdin.send_key("\n")
+            time.sleep(0.1)
+            assert monitor.done_event.is_set()
+            assert monitor.state == RecordingState.DONE
+        finally:
+            monitor.stop()
+
+    @patch("neev_voice.audio.keyboard.termios")
+    @patch("neev_voice.audio.keyboard.tty")
+    def test_escape_sets_cancelled(self, mock_tty, mock_termios, fake_stdin):
+        """Test ESC sets cancelled_event in PRESENTATION mode."""
+        monitor = KeyboardMonitor(stdin=fake_stdin, mode=MonitorMode.PRESENTATION)
+        monitor.start()
+
+        try:
+            fake_stdin.send_key("\x1b")
+            time.sleep(0.1)
+            assert monitor.cancelled_event.is_set()
+            assert monitor.state == RecordingState.CANCELLED
+        finally:
+            monitor.stop()
+
+    @patch("neev_voice.audio.keyboard.termios")
+    @patch("neev_voice.audio.keyboard.tty")
+    def test_m_sets_manual_event(self, mock_tty, mock_termios, fake_stdin):
+        """Test M sets manual_event in PRESENTATION mode."""
+        called = []
+        monitor = KeyboardMonitor(
+            stdin=fake_stdin,
+            mode=MonitorMode.PRESENTATION,
+            on_manual=lambda: called.append(True),
+        )
+        monitor.start()
+
+        try:
+            fake_stdin.send_key("m")
+            time.sleep(0.1)
+            assert monitor.manual_event.is_set()
+            assert len(called) == 1
+        finally:
+            monitor.stop()
+
+    @patch("neev_voice.audio.keyboard.termios")
+    @patch("neev_voice.audio.keyboard.tty")
+    def test_interrupted_event_not_set_initially(self, mock_tty, mock_termios, fake_stdin):
+        """Test interrupted_event is not set initially."""
+        monitor = KeyboardMonitor(stdin=fake_stdin, mode=MonitorMode.PRESENTATION)
+        assert not monitor.interrupted_event.is_set()
+
+    @patch("neev_voice.audio.keyboard.termios")
+    @patch("neev_voice.audio.keyboard.tty")
+    def test_spacebar_breaks_loop(self, mock_tty, mock_termios, fake_stdin):
+        """Test spacebar tap breaks the monitor loop in PRESENTATION mode."""
+        monitor = KeyboardMonitor(stdin=fake_stdin, mode=MonitorMode.PRESENTATION)
+        monitor.start()
+
+        try:
+            fake_stdin.send_key(" ")
+            time.sleep(0.2)
+            # Thread should have stopped
+            assert monitor.interrupted_event.is_set()
+        finally:
+            monitor.stop()

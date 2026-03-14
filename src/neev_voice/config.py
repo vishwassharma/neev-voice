@@ -198,6 +198,34 @@ class NeevSettings(BaseSettings):
         le=10,
         description="Maximum iterations for v2 enrichment loop (1-10)",
     )
+    discuss_base_dir: str = Field(
+        default=".scratch/neev/discuss",
+        description="Base directory for discuss session storage",
+    )
+    discuss_mcp_config: str = Field(
+        default="",
+        description="MCP servers config for Claude CLI. Empty = default path",
+    )
+    discuss_max_doc_chars: int = Field(
+        default=100_000,
+        ge=1_000,
+        le=1_000_000,
+        description="Max characters per document for concept extraction (1K-1M)",
+    )
+    discuss_max_source_chars: int = Field(
+        default=50_000,
+        ge=1_000,
+        le=500_000,
+        description="Max characters per source file for tutorial generation (1K-500K)",
+    )
+    discuss_doc_extensions: str = Field(
+        default=".md,.txt,.rst,.html,.pdf,.json",
+        description="Comma-separated file extensions for research documents",
+    )
+    discuss_prepare_model: str = Field(
+        default="",
+        description="Claude model for discuss prepare phase. Empty = use claude_model",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -254,6 +282,41 @@ class NeevSettings(BaseSettings):
             JsonConfigSettingsSource(settings_cls),
             file_secret_settings,
         )
+
+    @property
+    def resolved_mcp_config(self) -> str:
+        """Return the MCP config path, falling back to the default location.
+
+        Returns:
+            Path to the MCP servers config file.
+        """
+        if self.discuss_mcp_config:
+            return self.discuss_mcp_config
+        return str(Path.home() / ".config" / "mcphub" / "servers.json")
+
+    @property
+    def resolved_discuss_model(self) -> str:
+        """Return the Claude model for discuss prepare phase.
+
+        Falls back to the general claude_model if not explicitly set.
+
+        Returns:
+            Model name string.
+        """
+        return self.discuss_prepare_model or self.claude_model
+
+    @property
+    def resolved_doc_extensions(self) -> set[str]:
+        """Parse the comma-separated doc extensions into a set.
+
+        Returns:
+            Set of file extensions including the leading dot.
+        """
+        return {
+            ext.strip() if ext.strip().startswith(".") else f".{ext.strip()}"
+            for ext in self.discuss_doc_extensions.split(",")
+            if ext.strip()
+        }
 
     @property
     def resolved_llm_api_key(self) -> str:
@@ -380,6 +443,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "llm_api_base": "",
     "enrichment_version": "v2",
     "enrichment_max_iterations": 3,
+    "discuss_base_dir": ".scratch/neev/discuss",
+    "discuss_mcp_config": "",
+    "discuss_max_doc_chars": 100000,
+    "discuss_max_source_chars": 50000,
+    "discuss_doc_extensions": ".md,.txt,.rst,.html,.pdf,.json",
+    "discuss_prepare_model": "",
 }
 """Default config values written on first run.
 

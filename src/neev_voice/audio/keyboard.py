@@ -4,6 +4,10 @@ Detects spacebar hold/release and Enter key press without external
 dependencies. Uses tty.setcbreak() to read stdin character-by-character
 and select.select() for non-blocking polling. Spacebar release is
 detected via a configurable timeout (no space chars received).
+
+Supports two monitor modes:
+- RECORDING: Push-to-talk with spacebar hold/release detection.
+- PRESENTATION: Spacebar tap for interrupt, ENTER for next, M for manual input.
 """
 
 from __future__ import annotations
@@ -19,7 +23,20 @@ from collections.abc import Callable
 from enum import StrEnum
 from typing import IO
 
-__all__ = ["KeyboardMonitor", "RecordingState"]
+__all__ = ["KeyboardMonitor", "MonitorMode", "RecordingState"]
+
+
+class MonitorMode(StrEnum):
+    """Operating mode for the keyboard monitor.
+
+    Attributes:
+        RECORDING: Push-to-talk mode with spacebar hold/release detection.
+        PRESENTATION: Tap-based mode where spacebar interrupts playback,
+            ENTER advances, and M triggers manual text input.
+    """
+
+    RECORDING = "recording"
+    PRESENTATION = "presentation"
 
 
 class RecordingState(StrEnum):
@@ -48,10 +65,18 @@ class KeyboardMonitor:
     communication with async code via threading.Event and
     loop.call_soon_threadsafe().
 
+    In RECORDING mode (default), spacebar hold/release is detected via
+    timeout-based release detection. In PRESENTATION mode, spacebar tap
+    sets an interrupt event, and 'M'/'m' sets a manual input event.
+
     Attributes:
         release_timeout: Seconds of no-space-char to detect key release.
         recording_event: Set when spacebar is held (recording active).
         done_event: Set when Enter is pressed (recording finalized).
+        cancelled_event: Set when ESC is pressed (recording cancelled).
+        manual_event: Set when M/m is pressed (manual input requested).
+        interrupted_event: Set when spacebar tapped in PRESENTATION mode.
+        mode: Current monitor mode (RECORDING or PRESENTATION).
         state: Current recording state.
     """
 
@@ -60,6 +85,9 @@ class KeyboardMonitor:
         release_timeout: float = 0.15,
         on_state_change: Callable[[RecordingState], None] | None = None,
         stdin: IO[str] | None = None,
+        mode: MonitorMode = MonitorMode.RECORDING,
+        on_manual: Callable[[], None] | None = None,
+        on_interrupt: Callable[[], None] | None = None,
     ) -> None:
         """Initialize KeyboardMonitor.
 
@@ -68,13 +96,23 @@ class KeyboardMonitor:
             on_state_change: Optional callback fired on state transitions.
             stdin: Optional file object to read from (defaults to sys.stdin).
                    Useful for testing with os.pipe().
+            mode: Monitor mode (RECORDING for push-to-talk, PRESENTATION
+                  for tap-based control).
+            on_manual: Optional callback fired when M key is pressed.
+            on_interrupt: Optional callback fired when spacebar tapped
+                          in PRESENTATION mode.
         """
         self.release_timeout = release_timeout
         self._on_state_change = on_state_change
+        self._on_manual = on_manual
+        self._on_interrupt = on_interrupt
         self._stdin = stdin or sys.stdin
+        self.mode = mode
         self.recording_event = threading.Event()
         self.done_event = threading.Event()
         self.cancelled_event = threading.Event()
+        self.manual_event = threading.Event()
+        self.interrupted_event = threading.Event()
         self.state = RecordingState.IDLE
         self._thread: threading.Thread | None = None
         self._old_settings: list | None = None
@@ -96,12 +134,31 @@ class KeyboardMonitor:
             else:
                 self._on_state_change(new_state)
 
+    def _fire_callback(self, callback: Callable[[], None] | None) -> None:
+        """Fire a callback, respecting async loop thread-safety.
+
+        Args:
+            callback: The callback to fire, or None to skip.
+        """
+        if callback is None:
+            return
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(callback)
+        else:
+            callback()
+
     def _monitor_loop(self) -> None:
         """Background thread main loop reading stdin in cbreak mode.
 
-        Polls stdin with select.select() at 50ms intervals. Detects
-        spacebar hold (space chars arriving), release (timeout with no
-        space chars), and Enter (newline/carriage return).
+        Polls stdin with select.select() at 50ms intervals. Behavior
+        depends on the monitor mode:
+
+        RECORDING mode: Detects spacebar hold (space chars arriving),
+        release (timeout with no space chars), Enter, ESC, and M key.
+
+        PRESENTATION mode: Spacebar tap sets interrupted_event (no
+        hold/release tracking), Enter sets done_event, ESC sets
+        cancelled_event, and M sets manual_event.
         """
         poll_interval = 0.05
         last_space_time: float | None = None
@@ -120,28 +177,66 @@ class KeyboardMonitor:
                 except (OSError, ValueError):
                     break
 
-                if ch == " ":
-                    last_space_time = time.monotonic()
-                    if not self.recording_event.is_set():
-                        self.recording_event.set()
-                        self._set_state(RecordingState.RECORDING)
-                elif ch in ("\n", "\r"):
-                    self.recording_event.clear()
-                    self.done_event.set()
-                    self._set_state(RecordingState.DONE)
-                    break
-                elif ch == "\x1b":
-                    self.recording_event.clear()
-                    self.cancelled_event.set()
-                    self._set_state(RecordingState.CANCELLED)
-                    break
+                if self.mode == MonitorMode.PRESENTATION:
+                    self._handle_presentation_key(ch)
+                    if self.done_event.is_set() or self.cancelled_event.is_set():
+                        break
+                    if self.interrupted_event.is_set() or self.manual_event.is_set():
+                        break
+                else:
+                    if ch == " ":
+                        last_space_time = time.monotonic()
+                        if not self.recording_event.is_set():
+                            self.recording_event.set()
+                            self._set_state(RecordingState.RECORDING)
+                    elif ch in ("\n", "\r"):
+                        self.recording_event.clear()
+                        self.done_event.set()
+                        self._set_state(RecordingState.DONE)
+                        break
+                    elif ch == "\x1b":
+                        self.recording_event.clear()
+                        self.cancelled_event.set()
+                        self._set_state(RecordingState.CANCELLED)
+                        break
+                    elif ch in ("m", "M"):
+                        self.recording_event.clear()
+                        self.manual_event.set()
+                        self._fire_callback(self._on_manual)
+                        break
             else:
-                if last_space_time is not None and self.recording_event.is_set():
+                if (
+                    self.mode == MonitorMode.RECORDING
+                    and last_space_time is not None
+                    and self.recording_event.is_set()
+                ):
                     elapsed = time.monotonic() - last_space_time
                     if elapsed >= self.release_timeout:
                         self.recording_event.clear()
                         self._set_state(RecordingState.PAUSED)
                         last_space_time = None
+
+    def _handle_presentation_key(self, ch: str) -> None:
+        """Handle a keypress in PRESENTATION mode.
+
+        In presentation mode, spacebar is a single tap (interrupt),
+        not a hold/release. No hold detection is performed.
+
+        Args:
+            ch: The character read from stdin.
+        """
+        if ch == " ":
+            self.interrupted_event.set()
+            self._fire_callback(self._on_interrupt)
+        elif ch in ("\n", "\r"):
+            self.done_event.set()
+            self._set_state(RecordingState.DONE)
+        elif ch == "\x1b":
+            self.cancelled_event.set()
+            self._set_state(RecordingState.CANCELLED)
+        elif ch in ("m", "M"):
+            self.manual_event.set()
+            self._fire_callback(self._on_manual)
 
     def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         """Start the keyboard monitor background thread.

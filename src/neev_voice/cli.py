@@ -399,146 +399,207 @@ async def _enrich_async(verbose: bool) -> None:
 
 @app.command()
 def discuss(
-    document_path: str = typer.Argument(..., help="Path to document to discuss"),
+    name: str | None = typer.Option(None, "-n", help="Session name (auto-generated if omitted)"),
+    files: str | None = typer.Option(
+        None, "--files", help="Research folder path (required for new)"
+    ),
+    source: str | None = typer.Option(
+        None, "--source", help="Source code root (default: git root)"
+    ),
+    continue_session: bool = typer.Option(False, "--continue", help="Continue last session"),
+    resume: str | None = typer.Option(None, "--resume", help="Resume a specific session by name"),
+    reset: bool = typer.Option(False, "--reset", help="Reset session state to prepare"),
+    enquery: bool = typer.Option(False, "--enquery", help="Jump to enquiry state"),
+    output: str | None = typer.Option(
+        None, "--output", help="Output folder (default: scratch pad)"
+    ),
     stt: str | None = typer.Option(None, "--stt", help="STT provider"),
     tts: str | None = typer.Option(None, "--tts", help="TTS provider"),
-    mode: str | None = typer.Option(
-        None,
-        "--mode",
-        "-m",
-        help="STT mode: translate (Hindi→English), codemix (mixed), formal (Devanagari)",
-    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ) -> None:
-    """Interactively discuss a document with voice input.
+    """Interactive research discussion with state machine.
 
-    Walks through each section of the document, reads it aloud
-    via TTS, records the user's voice response, and classifies
-    agreement or disagreement.
+    Analyzes research documents, generates progressive tutorials,
+    and presents them via TTS with interactive enquiry support.
+
+    Start a new session with ``--files``, resume with ``--continue``
+    or ``--resume``, and control state with ``--reset`` / ``--enquery``.
     """
-    asyncio.run(_discuss_async(document_path, stt, tts, mode, verbose))
+    asyncio.run(
+        _discuss_async(
+            name,
+            files,
+            source,
+            continue_session,
+            resume,
+            reset,
+            enquery,
+            output,
+            stt,
+            tts,
+            verbose,
+        )
+    )
+
+
+def _find_git_root() -> Path:
+    """Find the git repository root from the current directory.
+
+    Returns:
+        Path to the git root, or current working directory if not in a repo.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return Path(result.stdout.strip())
+    return Path.cwd()
 
 
 async def _discuss_async(
-    document_path: str,
+    name: str | None,
+    files: str | None,
+    source: str | None,
+    continue_session: bool,
+    resume: str | None,
+    reset: bool,
+    enquery: bool,
+    output: str | None,
     stt_name: str | None,
     tts_name: str | None,
-    mode: str | None,
     verbose: bool,
 ) -> None:
     """Async implementation of the discuss command.
 
-    Creates a scratch pad, reads the latest listen folder for context,
-    discusses the document section by section, and saves all artifacts.
+    Resolves session (new, continue, or resume), applies state overrides,
+    sets up providers, and runs the state machine.
 
     Args:
-        document_path: Path to the document to discuss.
+        name: Optional session name.
+        files: Research folder path.
+        source: Source code root path.
+        continue_session: Whether to continue the latest session.
+        resume: Name of a specific session to resume.
+        reset: Whether to reset state to prepare.
+        enquery: Whether to jump to enquiry state.
+        output: Optional output folder path.
         stt_name: Optional STT provider name override.
         tts_name: Optional TTS provider name override.
-        mode: Optional STT mode override (translate, codemix, formal).
         verbose: Whether to show verbose output.
     """
-    from neev_voice.audio.recorder import AudioRecorder
-    from neev_voice.discussion.manager import DiscussionManager
-    from neev_voice.intent.extractor import IntentExtractor
-    from neev_voice.llm.agent import EnrichmentAgent
-    from neev_voice.scratch import ScratchPad
-    from neev_voice.stt.sarvam import get_stt_provider
-    from neev_voice.tts.edge import get_tts_provider
+    from neev_voice.discuss.names import generate_session_name
+    from neev_voice.discuss.runner import DiscussRunner
+    from neev_voice.discuss.session import SessionManager
+    from neev_voice.discuss.state import DiscussState, StateStack
 
     configure_logging(json_logs=not verbose)
     settings = _get_settings()
-    logger.info("discuss_command_started", document=document_path)
+    logger.info("discuss_command_started")
 
-    if mode:
+    session_mgr = SessionManager(base_dir=Path(settings.discuss_base_dir))
+
+    # Resolve session
+    if resume:
+        session = session_mgr.load_session(resume)
+        if not session:
+            console.print(f"[red]Error:[/red] Session '{resume}' not found.")
+            existing = session_mgr.list_sessions()
+            if existing:
+                console.print(f"[dim]Available sessions: {', '.join(existing)}[/dim]")
+            raise typer.Exit(1)
+    elif continue_session:
+        session = session_mgr.get_latest_session()
+        if not session:
+            console.print("[red]Error:[/red] No previous session found.")
+            raise typer.Exit(1)
+        console.print(f"[dim]Continuing session: {session.name}[/dim]")
+    else:
+        # New session
+        if not files:
+            console.print("[red]Error:[/red] --files is required for new sessions.")
+            raise typer.Exit(1)
+
+        files_path = Path(files)
+        if not files_path.exists():
+            console.print(f"[red]Error:[/red] Research path not found: {files}")
+            raise typer.Exit(1)
+
+        session_name = name or generate_session_name()
+        source_path = source or str(_find_git_root())
+        output_path = output
+
         try:
-            settings.stt_mode = SarvamSTTMode(mode)
-        except ValueError:
-            available = ", ".join(m.value for m in SarvamSTTMode)
-            console.print(f"[red]Error:[/red] Unknown STT mode '{mode}'. Available: {available}")
+            session = session_mgr.create_session(
+                session_name,
+                research_path=str(files_path.resolve()),
+                source_path=source_path,
+                output_path=output_path,
+            )
+        except FileExistsError:
+            console.print(
+                f"[red]Error:[/red] Session '{session_name}' already exists. "
+                "Use --resume to resume it."
+            )
             raise typer.Exit(1) from None
+
+        console.print(f"[bold]Created session:[/bold] {session_name}")
+
+    # Apply state overrides
+    if reset:
+        session.state = DiscussState.PREPARE
+        session.state_stack = StateStack()
+        session_mgr.save_session(session)
+        console.print("[dim]Session reset to prepare state.[/dim]")
+    elif enquery:
+        session.state = DiscussState.ENQUIRY
+        session_mgr.save_session(session)
+        console.print("[dim]Session set to enquiry state.[/dim]")
+
+    # Setup STT/TTS providers
+    stt_provider = None
+    tts_provider = None
 
     stt_provider_name = stt_name or settings.stt_provider.value
     tts_provider_name = tts_name or settings.tts_provider.value
 
     try:
+        from neev_voice.stt.sarvam import get_stt_provider
+        from neev_voice.tts.edge import get_tts_provider
+
         stt_provider = get_stt_provider(stt_provider_name, settings)
         tts_provider = get_tts_provider(tts_provider_name, settings)
     except (ValueError, NeevConfigError) as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1) from None
+        if verbose:
+            console.print(f"[yellow]Warning:[/yellow] Provider setup: {e}")
+        # Continue without providers — prepare state doesn't need them
 
-    scratch = ScratchPad("discussion")
-
-    recorder = AudioRecorder(settings=settings)
-    agent = EnrichmentAgent(settings, scratch_path=str(scratch.flow_dir))
-    extractor = IntentExtractor(agent)
-
-    manager = DiscussionManager(
-        settings=settings,
-        recorder=recorder,
-        stt=stt_provider,
-        tts=tts_provider,
-        intent_extractor=extractor,
+    console.print(
+        f"[bold cyan]Session:[/bold cyan] {session.name} | "
+        f"[bold cyan]State:[/bold cyan] {session.state}"
     )
 
-    doc_path = Path(document_path)
-    console.print(f"[bold]Discussing:[/bold] {doc_path}")
+    # Run the state machine
+    runner = DiscussRunner(
+        session=session,
+        settings=settings,
+        session_manager=session_mgr,
+        tts_provider=tts_provider,
+        stt_provider=stt_provider,
+    )
 
     try:
-        results = await manager.run_discussion(doc_path)
-    except FileNotFoundError as e:
+        await runner.run()
+    except (NeevError, RuntimeError) as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1) from None
 
-    # Save section results to scratch pad
-    for i, result in enumerate(results, 1):
-        scratch.save_section(
-            i,
-            {
-                "section": result.section,
-                "user_response": result.user_response,
-                "intent": result.intent.value,
-                "summary": result.summary,
-            },
-        )
-
-    agreements = sum(1 for r in results if r.intent.value == "agreement")
-    disagreements = sum(1 for r in results if r.intent.value == "disagreement")
-
-    scratch.save_summary(
-        {
-            "total_sections": len(results),
-            "agreements": agreements,
-            "disagreements": disagreements,
-            "document_path": str(doc_path),
-        }
-    )
-
-    scratch.save_metadata(
-        document_path=str(doc_path),
-        total_sections=len(results),
-        agreements=agreements,
-        disagreements=disagreements,
-    )
-
-    # Generate discussion-result.md with consolidated insights
-    scratch.save_discussion_result(
-        _build_discussion_result_md(doc_path, results, agreements, disagreements)
-    )
-
-    console.print(f"\n[bold]Discussion complete![/bold] {len(results)} sections reviewed.")
-
-    table = Table(title="Discussion Summary")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Count", justify="right")
-    table.add_row("Total Sections", str(len(results)))
-    table.add_row("Agreements", f"[green]{agreements}[/green]")
-    table.add_row("Disagreements", f"[red]{disagreements}[/red]")
-    console.print(table)
-
+    console.print(f"\n[bold]Session complete:[/bold] {session.name}")
     if verbose:
-        console.print(f"[dim]Artifacts saved to: {scratch.flow_dir}[/dim]")
+        console.print(f"[dim]Session dir: {session_mgr.session_dir(session.name)}[/dim]")
 
 
 def _build_discussion_result_md(
@@ -644,6 +705,18 @@ def config_show(ctx: typer.Context) -> None:
     table.add_row("STT Max Audio Duration", f"{settings.stt_max_audio_duration}s")
     table.add_row("Enrichment Version", settings.enrichment_version.value)
     table.add_row("Enrichment Max Iterations", str(settings.enrichment_max_iterations))
+    table.add_row("Discuss Base Dir", settings.discuss_base_dir)
+    table.add_row(
+        "Discuss MCP Config",
+        settings.discuss_mcp_config or "(~/.config/mcphub/servers.json)",
+    )
+    table.add_row("Discuss Max Doc Chars", f"{settings.discuss_max_doc_chars:,}")
+    table.add_row("Discuss Max Source Chars", f"{settings.discuss_max_source_chars:,}")
+    table.add_row("Discuss Doc Extensions", settings.discuss_doc_extensions)
+    table.add_row(
+        "Discuss Prepare Model",
+        settings.discuss_prepare_model or f"(← {settings.claude_model})",
+    )
     table.add_row(
         "Sarvam API Key",
         "[green]configured[/green]" if settings.sarvam_api_key else "[red]not set[/red]",
