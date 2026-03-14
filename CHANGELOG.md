@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-03-14
+
+### Added
+
+- **ENTER gate before TTS playback** — waits for user to press ENTER before starting TTS for each concept in PRESENTATION and PRESENTATION_ENQUIRY states; SPACE to ask, ESC to quit
+- **Prepare resume after Ctrl+C** — `PrepareEngine` skips content generation for concepts that already have tutorial/explainer/transcript artifacts on disk
+- **Presentation resume after Ctrl+C** — `presentation_index` persisted to session via `on_concept_done` callback; resumes from last completed concept
+- **Session export/import** — `neev discuss --export <name>` packages session + research docs into a portable zip archive; `neev discuss --import <path>` recreates session on another machine with path remapping
+- **List sessions** — `neev discuss --list-sessions` displays all sessions in a Rich table (name, state, concepts, created, updated)
+- **Schema migration system** — `discuss/migration.py` with versioned migrations (v1→v2); `SessionManager.load_session()` auto-migrates old sessions; `neev discuss --migrate` to explicitly upgrade all sessions
+- **Enquiry-only mode** — `--files` is now optional; without it, session starts directly in ENQUIRY state, skipping PREPARE and PRESENTATION entirely
+- `discuss/portability.py` module with `export_session()` and `import_session()`
+- `discuss/migration.py` module with `CURRENT_SCHEMA_VERSION` and `migrate_session_data()`
+- 828 tests with 91.25% code coverage
+
+### Changed
+
+- **`SessionInfo` schema** — added `presentation_index` (int, default 0) and `schema_version` (int, default 2) fields with backward-compatible deserialization
+- **`PresentationEngine`** — added `on_concept_done` callback parameter for progress tracking
+- **`DiscussRunner`** — uses `session.presentation_index` as start index for resume; enquiry-only mode exits on ENTER/completion after answer, SPACE re-enters enquiry
+- **CLI `discuss` command** — `--files` no longer required; new standalone flags `--list-sessions`, `--export`, `--import`, `--migrate` exit without entering state machine
+
+## [0.9.1] - 2026-03-14
+
+### Added
+
+- **ENTER gate before TTS playback** — initial implementation of `_wait_for_start()` in `PresentationEngine`
+
+## [0.9.0] - 2026-03-13
+
+### Added
+
+- **Discuss state machine** — new `discuss/` subpackage with states: PREPARE → PRESENTATION ↔ ENQUIRY ↔ PREPARE_ENQUIRY ↔ PRESENTATION_ENQUIRY
+- **SessionManager** with atomic JSON persistence in `.scratch/neev/discuss/<session-name>/`
+- **Stack-based state tracking** for nested presentation/enquiry transitions
+- **PrepareEngine** — Claude CLI document analysis and concept extraction
+- **PresentationEngine** — interruptible TTS playback with keyboard monitoring
+- **EnquiryEngine** — voice recording (push-to-talk + STT) and manual text input
+- **PrepareEnquiryEngine** — answer research via Claude CLI (new + follow-up)
+- **KeyboardMonitor** extended with `MonitorMode` (RECORDING/PRESENTATION)
+- **CLI**: `neev discuss --files <path> [-n name] [--source] [--continue] [--resume] [--reset] [--enquery]`
+- 3-word kebab-case auto-generated session names
+- 764 tests with 91.57% code coverage
+
 ## [0.8.2] - 2026-03-06
 
 ### Changed
@@ -169,7 +213,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `detect-secrets` and `detect-private-key` pre-commit hooks
 - `no-commit-to-branch` hook protecting main branch
 
-[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/vishwassharma/neev-voice/compare/v0.9.0...v0.9.3
+[0.9.1]: https://github.com/vishwassharma/neev-voice/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/vishwassharma/neev-voice/compare/v0.8.2...v0.9.0
+[0.8.2]: https://github.com/vishwassharma/neev-voice/compare/v0.8.1...v0.8.2
+[0.8.1]: https://github.com/vishwassharma/neev-voice/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/vishwassharma/neev-voice/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/vishwassharma/neev-voice/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/vishwassharma/neev-voice/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/vishwassharma/neev-voice/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/vishwassharma/neev-voice/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/vishwassharma/neev-voice/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/vishwassharma/neev-voice/compare/v0.2.0...v0.3.0
