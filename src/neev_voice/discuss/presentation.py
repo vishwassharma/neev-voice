@@ -201,11 +201,8 @@ class PresentationEngine:
         if not answer_text:
             return PresentationResult(completed=True)
 
-        # Wait for user to press ENTER before speaking the answer
-        gate_result = await self._wait_for_start(0, 1)
-        if gate_result is not None:
-            return gate_result
-
+        # No ENTER gate for answers — TTS starts immediately
+        # (answer text is shown by the TUI before this is called)
         return await self._present_single(answer_text, 0, 1)
 
     async def _wait_for_start(self, concept_index: int, total: int) -> PresentationResult | None:

@@ -719,10 +719,10 @@ class TestRunIntegration:
 
         await runner.run()
 
-        # Called for PREPARE and PRESENTATION states
+        # Called for PREPARE and PRESENTATION states with context dicts
         assert callback.call_count == 2
-        callback.assert_any_call(DiscussState.PREPARE)
-        callback.assert_any_call(DiscussState.PRESENTATION)
+        callback.assert_any_call(DiscussState.PREPARE, {})
+        callback.assert_any_call(DiscussState.PRESENTATION, {})
 
     @patch("neev_voice.discuss.runner.PrepareEngine")
     @patch("neev_voice.discuss.runner.PresentationEngine")

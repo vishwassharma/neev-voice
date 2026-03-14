@@ -182,6 +182,32 @@ _STATE_PANELS = {
 }
 """Static panel builders for states that don't need dynamic parameters."""
 
+_MAX_ANSWER_DISPLAY = 2000
+"""Maximum characters of answer text to display in the panel."""
+
+
+def make_answer_text_panel(answer: str) -> Panel:
+    """Create a Rich Panel displaying the answer text content.
+
+    Args:
+        answer: The answer text to display.
+
+    Returns:
+        Styled Rich Panel with answer content and key instructions.
+    """
+    display = answer[:_MAX_ANSWER_DISPLAY]
+    if len(answer) > _MAX_ANSWER_DISPLAY:
+        display += "\n..."
+
+    lines = Text()
+    lines.append(f"{display}\n\n", style="")
+    lines.append("  SPACE ", style="bold yellow")
+    lines.append("follow-up  ", style="dim")
+    lines.append("ESC ", style="bold red")
+    lines.append("done", style="dim")
+
+    return Panel(lines, title="Answer", border_style="green")
+
 
 class DiscussTUI:
     """Rich TUI wrapper for the discuss state machine.
@@ -216,23 +242,29 @@ class DiscussTUI:
         await self.runner.run()
         self._print_footer()
 
-    def _on_state_enter(self, state: DiscussState) -> None:
+    def _on_state_enter(self, state: DiscussState, ctx: dict) -> None:
         """Callback fired at the start of each state machine iteration.
 
-        Renders the appropriate panel for the current state.
+        Renders the appropriate panel for the current state. For
+        PRESENTATION_ENQUIRY, displays the answer text immediately.
 
         Args:
             state: The state being entered.
+            ctx: Context dict with state-specific data (e.g. answer text).
         """
+        if state == DiscussState.PRESENTATION_ENQUIRY:
+            answer = ctx.get("answer", "")
+            if answer:
+                self.console.print(make_answer_text_panel(answer))
+            return
+
+        if state == DiscussState.PRESENTATION:
+            # Presentation panel is rendered by the engine's _wait_for_start
+            return
+
         panel_fn = _STATE_PANELS.get(state)
         if panel_fn:
             self.console.print(panel_fn())
-        elif state == DiscussState.PRESENTATION:
-            # Presentation panel is rendered by the engine's _wait_for_start
-            pass
-        elif state == DiscussState.PRESENTATION_ENQUIRY:
-            # Answer panel is rendered by the engine's _wait_for_start
-            pass
 
     def _print_header(self) -> None:
         """Print session header with name and initial state."""

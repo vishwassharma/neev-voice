@@ -55,7 +55,7 @@ class DiscussRunner:
         session_manager: SessionManager,
         tts_provider: TTSProvider | None = None,
         stt_provider: STTProvider | None = None,
-        on_state_enter: Callable[[DiscussState], None] | None = None,
+        on_state_enter: Callable[[DiscussState, dict], None] | None = None,
     ) -> None:
         """Initialize the state machine runner.
 
@@ -66,7 +66,7 @@ class DiscussRunner:
             tts_provider: Optional TTS provider for audio synthesis.
             stt_provider: Optional STT provider for voice transcription.
             on_state_enter: Optional callback fired at the start of each
-                state machine iteration, before the handler runs.
+                state machine iteration with (state, context_dict).
         """
         self.session = session
         self.settings = settings
@@ -98,7 +98,10 @@ class DiscussRunner:
             logger.info("discuss_runner_state", state=state)
 
             if self.on_state_enter:
-                self.on_state_enter(state)
+                ctx: dict = {}
+                if state == DiscussState.PRESENTATION_ENQUIRY and self._current_answer:
+                    ctx["answer"] = self._current_answer
+                self.on_state_enter(state, ctx)
 
             match state:
                 case DiscussState.PREPARE:

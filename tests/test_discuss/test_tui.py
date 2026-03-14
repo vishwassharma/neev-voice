@@ -14,6 +14,7 @@ from neev_voice.discuss.state import DiscussState
 from neev_voice.discuss.tui import (
     DiscussTUI,
     make_answer_panel,
+    make_answer_text_panel,
     make_enquiry_panel,
     make_prepare_enquiry_panel,
     make_prepare_panel,
@@ -183,6 +184,39 @@ class TestMakePrepareEnquiryPanel:
         assert "Researching" in panel.renderable.plain
 
 
+class TestMakeAnswerTextPanel:
+    """Tests for make_answer_text_panel."""
+
+    def test_returns_panel(self) -> None:
+        """Returns a Rich Panel."""
+        panel = make_answer_text_panel("Some answer")
+        assert isinstance(panel, Panel)
+
+    def test_shows_answer_text(self) -> None:
+        """Panel displays the answer content."""
+        panel = make_answer_text_panel("The answer is 42.")
+        assert "The answer is 42." in panel.renderable.plain
+
+    def test_shows_key_instructions(self) -> None:
+        """Panel shows SPACE and ESC keys."""
+        panel = make_answer_text_panel("answer")
+        text = panel.renderable.plain
+        assert "SPACE" in text
+        assert "ESC" in text
+
+    def test_truncates_long_answer(self) -> None:
+        """Long answers are truncated."""
+        long_text = "x" * 3000
+        panel = make_answer_text_panel(long_text)
+        text = panel.renderable.plain
+        assert "..." in text
+
+    def test_title_is_answer(self) -> None:
+        """Panel title is Answer."""
+        panel = make_answer_text_panel("text")
+        assert panel.title == "Answer"
+
+
 class TestDiscussTUI:
     """Tests for DiscussTUI wrapper class."""
 
@@ -222,33 +256,41 @@ class TestDiscussTUI:
         runner = self._make_runner(tmp_path)
         console = Console(file=open("/dev/null", "w"))  # noqa: SIM115
         tui = DiscussTUI(runner, console=console)
-        # Should not raise
-        tui._on_state_enter(DiscussState.PREPARE)
+        tui._on_state_enter(DiscussState.PREPARE, {})
 
     def test_on_state_enter_enquiry(self, tmp_path: Path) -> None:
         """Enquiry state renders enquiry panel."""
         runner = self._make_runner(tmp_path)
         console = Console(file=open("/dev/null", "w"))  # noqa: SIM115
         tui = DiscussTUI(runner, console=console)
-        tui._on_state_enter(DiscussState.ENQUIRY)
+        tui._on_state_enter(DiscussState.ENQUIRY, {})
 
     def test_on_state_enter_prepare_enquiry(self, tmp_path: Path) -> None:
         """Prepare-enquiry state renders research panel."""
         runner = self._make_runner(tmp_path)
         console = Console(file=open("/dev/null", "w"))  # noqa: SIM115
         tui = DiscussTUI(runner, console=console)
-        tui._on_state_enter(DiscussState.PREPARE_ENQUIRY)
+        tui._on_state_enter(DiscussState.PREPARE_ENQUIRY, {})
 
     def test_on_state_enter_presentation_no_crash(self, tmp_path: Path) -> None:
         """Presentation state does not crash (panel rendered by engine)."""
         runner = self._make_runner(tmp_path)
         console = Console(file=open("/dev/null", "w"))  # noqa: SIM115
         tui = DiscussTUI(runner, console=console)
-        tui._on_state_enter(DiscussState.PRESENTATION)
+        tui._on_state_enter(DiscussState.PRESENTATION, {})
 
-    def test_on_state_enter_presentation_enquiry_no_crash(self, tmp_path: Path) -> None:
-        """Presentation-enquiry state does not crash."""
+    def test_on_state_enter_presentation_enquiry_shows_answer(self, tmp_path: Path) -> None:
+        """Presentation-enquiry displays answer text from context."""
+        runner = self._make_runner(tmp_path)
+        output = open("/dev/null", "w")  # noqa: SIM115
+        console = Console(file=output)
+        tui = DiscussTUI(runner, console=console)
+        # Should not raise; answer is displayed via console.print
+        tui._on_state_enter(DiscussState.PRESENTATION_ENQUIRY, {"answer": "Test answer"})
+
+    def test_on_state_enter_presentation_enquiry_no_answer(self, tmp_path: Path) -> None:
+        """Presentation-enquiry with no answer does not crash."""
         runner = self._make_runner(tmp_path)
         console = Console(file=open("/dev/null", "w"))  # noqa: SIM115
         tui = DiscussTUI(runner, console=console)
-        tui._on_state_enter(DiscussState.PRESENTATION_ENQUIRY)
+        tui._on_state_enter(DiscussState.PRESENTATION_ENQUIRY, {})

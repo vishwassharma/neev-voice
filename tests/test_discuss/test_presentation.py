@@ -438,56 +438,17 @@ class TestPresentationEngineRun:
         assert result.state_data["current_concept_index"] == 1
         assert mock_wait.call_count == 2
 
-    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock, return_value=None)
-    async def test_run_answer_gate_called(
+    async def test_run_answer_skips_gate(
         self,
-        mock_wait: AsyncMock,
         session: SessionInfo,
         settings: MagicMock,
         prepare_dir: Path,
     ) -> None:
-        """run_answer() calls the ENTER gate before presenting."""
+        """run_answer() starts TTS immediately without ENTER gate."""
         engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
         result = await engine.run_answer("Some answer text")
-
-        mock_wait.assert_called_once_with(0, 1)
-        # No TTS provider, so no audio played
+        # No TTS provider → no audio → completed=False (not blocked on gate)
         assert not result.completed
-
-    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock)
-    async def test_run_answer_gate_interrupted(
-        self,
-        mock_wait: AsyncMock,
-        session: SessionInfo,
-        settings: MagicMock,
-        prepare_dir: Path,
-    ) -> None:
-        """SPACE during run_answer gate returns interrupted."""
-        mock_wait.return_value = PresentationResult(
-            interrupted=True,
-            state_data={"current_concept_index": 0, "total_concepts": 1},
-        )
-
-        engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
-        result = await engine.run_answer("Some answer text")
-
-        assert result.interrupted
-
-    @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock)
-    async def test_run_answer_gate_cancelled(
-        self,
-        mock_wait: AsyncMock,
-        session: SessionInfo,
-        settings: MagicMock,
-        prepare_dir: Path,
-    ) -> None:
-        """ESC during run_answer gate returns cancelled."""
-        mock_wait.return_value = PresentationResult(cancelled=True)
-
-        engine = PresentationEngine(session, settings, tts_provider=None, prepare_dir=prepare_dir)
-        result = await engine.run_answer("Some answer text")
-
-        assert result.cancelled
 
     @patch.object(PresentationEngine, "_wait_for_start", new_callable=AsyncMock, return_value=None)
     async def test_on_concept_done_called_for_each_concept(
