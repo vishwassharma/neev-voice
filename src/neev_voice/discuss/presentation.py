@@ -81,6 +81,7 @@ class PresentationEngine:
         self.tts_provider = tts_provider
         self.prepare_dir = prepare_dir or Path(settings.discuss_base_dir) / session.name / "prepare"
         self.on_concept_done = on_concept_done
+        self._playback_speed: float = 1.0
 
     def load_transcript(self, concept_index: int) -> str | None:
         """Load the TTS-ready transcript for a concept.
@@ -365,8 +366,9 @@ class PresentationEngine:
         elif data.dtype == np.int32:
             data = data.astype(np.float32) / 2147483648.0
 
-        # Start playback in background
-        sd.play(data, sample_rate)
+        # Start playback at current speed
+        effective_rate = int(sample_rate * self._playback_speed)
+        sd.play(data, effective_rate)
 
         # Monitor keyboard while playing
         monitor = KeyboardMonitor(mode=MonitorMode.PRESENTATION)
@@ -389,6 +391,19 @@ class PresentationEngine:
                 if monitor.cancelled_event.wait(timeout=0.0):
                     sd.stop()
                     return PresentationResult(cancelled=True)
+                if monitor.speed_changed_event.is_set():
+                    # Restart playback at new speed from current position
+                    monitor.speed_changed_event.clear()
+                    self._playback_speed = monitor.playback_speed
+                    pos = sd.get_stream().read_available if sd.get_stream() else 0
+                    sd.stop()
+                    remaining = data[pos:] if pos < len(data) else np.array([])
+                    if len(remaining) > 0:
+                        effective_rate = int(sample_rate * self._playback_speed)
+                        sd.play(remaining, effective_rate)
+                    else:
+                        break
+                    logger.debug("playback_speed_changed", speed=self._playback_speed)
         finally:
             monitor.stop()
 

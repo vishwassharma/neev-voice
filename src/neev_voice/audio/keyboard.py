@@ -113,6 +113,8 @@ class KeyboardMonitor:
         self.cancelled_event = threading.Event()
         self.manual_event = threading.Event()
         self.interrupted_event = threading.Event()
+        self.speed_changed_event = threading.Event()
+        self.playback_speed: float = 1.0
         self.state = RecordingState.IDLE
         self._thread: threading.Thread | None = None
         self._old_settings: list | None = None
@@ -220,7 +222,7 @@ class KeyboardMonitor:
         """Handle a keypress in PRESENTATION mode.
 
         In presentation mode, spacebar is a single tap (interrupt),
-        not a hold/release. No hold detection is performed.
+        not a hold/release. Number keys 1-3 cycle playback speed.
 
         Args:
             ch: The character read from stdin.
@@ -237,6 +239,10 @@ class KeyboardMonitor:
         elif ch in ("m", "M"):
             self.manual_event.set()
             self._fire_callback(self._on_manual)
+        elif ch in ("1", "2", "3", "4"):
+            speeds = {"1": 1.0, "2": 1.25, "3": 1.5, "4": 2.0}
+            self.playback_speed = speeds[ch]
+            self.speed_changed_event.set()
 
     def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         """Start the keyboard monitor background thread.
