@@ -96,6 +96,32 @@ def level_to_bars(level: float, num_bars: int = _NUM_EQ_BARS) -> str:
     return " ".join(bars)
 
 
+_SPEED_KEYS = [
+    ("1", 1.0, "1x"),
+    ("2", 1.25, "1.25x"),
+    ("3", 1.5, "1.5x"),
+    ("4", 2.0, "2x"),
+]
+"""Speed key mappings: (key, speed_value, label)."""
+
+
+def _append_speed_keys(lines: Text, active_speed: float) -> None:
+    """Append speed key instructions with the active speed highlighted.
+
+    Args:
+        lines: Rich Text object to append to.
+        active_speed: Currently active playback speed.
+    """
+    lines.append("  ")
+    for key, spd, label in _SPEED_KEYS:
+        if abs(spd - active_speed) < 0.01:
+            lines.append(f"{key} ", style="bold white on cyan")
+            lines.append(f"{label}  ", style="bold cyan")
+        else:
+            lines.append(f"{key} ", style="dim")
+            lines.append(f"{label}  ", style="dim")
+
+
 def make_playback_panel(
     title: str = "Answer",
     speed: float = 1.0,
@@ -136,14 +162,7 @@ def make_playback_panel(
     lines.append("skip  ", style="dim")
     lines.append("ESC ", style="bold red")
     lines.append("cancel\n", style="dim")
-    lines.append("  1 ", style="bold cyan")
-    lines.append("1x  ", style="dim")
-    lines.append("2 ", style="bold cyan")
-    lines.append("1.25x  ", style="dim")
-    lines.append("3 ", style="bold cyan")
-    lines.append("1.5x  ", style="dim")
-    lines.append("4 ", style="bold cyan")
-    lines.append("2x", style="dim")
+    _append_speed_keys(lines, speed)
 
     panel_title = "Answer" if is_answer else f"Playing {index + 1}/{total}"
     return Panel(lines, title=panel_title, border_style="green")

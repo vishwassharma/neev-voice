@@ -107,8 +107,8 @@ For each concept listed below, generate THREE files in the output directory:
 
 1. {tutorials_dir}/{{prefix}}.md — Detailed tutorial with examples
 2. {explainers_dir}/{{prefix}}.md — Brief 2-3 paragraph overview
-3. {transcripts_dir}/{{prefix}}.md — TTS-ready spoken text (natural spoken \
-language, NO markdown formatting, spell out abbreviations)
+3. {transcripts_dir}/{{prefix}}.md — TTS-ready spoken text optimized for \
+speech synthesis
 
 Where prefix for each concept is shown below.
 
@@ -121,6 +121,18 @@ Instructions:
 - Write all three files for each concept using the Write tool
 - Process concepts using parallel agents where possible for speed
 - Each file should contain ONLY the content (no headers or metadata)
+
+Transcript formatting rules (for TTS quality):
+- Use natural spoken language, NO markdown formatting
+- Spell out abbreviations (API becomes "A P I", HTTP becomes "H T T P")
+- Use commas and periods for natural pauses
+- Use ellipsis (...) for longer dramatic pauses
+- Use exclamation marks for emphasis
+- For Hindi-English mixed content: write English words in English script, \
+Hindi words in Devanagari script (code-mixing for natural Hinglish output)
+- Add conversational fillers where natural ("so", "now", "let's see")
+- Use line breaks between paragraphs for paragraph-level pauses
+- Keep sentences short and conversational, not academic
 """
 
 
