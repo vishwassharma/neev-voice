@@ -441,10 +441,12 @@ class DiscussTUI:
     async def run(self) -> None:
         """Run the discuss session with TUI display.
 
-        Shows a welcome banner, renders state panels during the
-        session, and prints a goodbye message on exit.
+        Shows a welcome banner, displays conversation history if
+        resuming, renders state panels during the session, and
+        prints a goodbye message on exit.
         """
         self._print_header()
+        self._print_history()
         try:
             await self.runner.run()
         finally:
@@ -509,6 +511,44 @@ class DiscussTUI:
         header.append(f"  {session.name}", style="bold")
         header.append(f"  ({session.state.value})", style="dim")
         self.console.print(Panel(header, border_style="cyan"))
+
+    def _print_history(self) -> None:
+        """Display conversation history if any exists.
+
+        Shows all previous Q&A pairs from ``history.json`` as Rich
+        panels so the user has context when resuming a session.
+        """
+        entries = self.runner.history.load()
+        if not entries:
+            return
+
+        self.console.print(f"\n[dim]--- Conversation history ({len(entries)} entries) ---[/dim]\n")
+        for entry in entries:
+            entry_type = entry.get("type", "")
+            content = entry.get("content", "")
+            ts = entry.get("timestamp", "")[:19].replace("T", " ")
+
+            if entry_type == "question":
+                self.console.print(
+                    Panel(
+                        Text(f"  {content}", style="bold"),
+                        title=f"Q  {ts}",
+                        border_style="yellow",
+                    )
+                )
+            elif entry_type == "answer":
+                display = content[:_MAX_ANSWER_DISPLAY]
+                if len(content) > _MAX_ANSWER_DISPLAY:
+                    display += "\n..."
+                self.console.print(
+                    Panel(
+                        display,
+                        title=f"A  {ts}",
+                        border_style="green",
+                    )
+                )
+
+        self.console.print("[dim]--- End of history ---[/dim]\n")
 
     def _print_footer(self) -> None:
         """Print session complete message."""

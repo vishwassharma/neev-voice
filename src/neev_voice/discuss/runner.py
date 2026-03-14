@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from neev_voice.discuss.enquiry import EnquiryEngine, EnquiryResult
+from neev_voice.discuss.history import SessionHistory
 from neev_voice.discuss.prepare import PrepareEngine
 from neev_voice.discuss.prepare_enquiry import PrepareEnquiryEngine
 from neev_voice.discuss.presentation import PresentationEngine
@@ -79,6 +80,7 @@ class DiscussRunner:
         self._current_enquiry: EnquiryResult | None = None
         self._current_answer: str | None = None
         self._restored_state_data: dict | None = None
+        self.history = SessionHistory(session_manager.session_dir(session.name))
 
     async def run(self) -> None:
         """Run the discuss state machine loop.
@@ -250,6 +252,7 @@ class DiscussRunner:
 
         if result.query:
             self._current_enquiry = result
+            self.history.append("question", result.query)
             self._transition(DiscussState.PREPARE_ENQUIRY)
             return True
 
@@ -293,6 +296,9 @@ class DiscussRunner:
             from_presentation_enquiry=from_pres_enquiry,
             previous_answer=previous_answer,
         )
+
+        if self._current_answer:
+            self.history.append("answer", self._current_answer)
 
         self._transition(DiscussState.PRESENTATION_ENQUIRY)
         return True
