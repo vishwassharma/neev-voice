@@ -1,22 +1,57 @@
-"""Rich TUI panels for the discuss state machine.
+"""Rich TUI for the discuss state machine.
 
-Provides panel-building functions for consistent visual feedback
-across presentation, enquiry, and answer playback states.
+Provides panel-building functions and the DiscussTUI wrapper class
+for consistent visual feedback across all discuss states.
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
 from neev_voice.audio.keyboard import RecordingState
+from neev_voice.discuss.state import DiscussState
+
+if TYPE_CHECKING:
+    from neev_voice.discuss.runner import DiscussRunner
 
 __all__ = [
+    "DiscussTUI",
     "make_answer_panel",
     "make_enquiry_panel",
+    "make_prepare_panel",
     "make_presentation_panel",
     "make_recording_panel",
 ]
+
+
+def make_prepare_panel() -> Panel:
+    """Create a Rich Panel for the prepare state.
+
+    Returns:
+        Styled Rich Panel showing preparation status.
+    """
+    lines = Text()
+    lines.append("  Analyzing documents and extracting concepts...\n\n", style="bold")
+    lines.append("  This may take a few minutes", style="dim")
+
+    return Panel(lines, title="Preparing", border_style="magenta")
+
+
+def make_prepare_enquiry_panel() -> Panel:
+    """Create a Rich Panel for the prepare-enquiry state.
+
+    Returns:
+        Styled Rich Panel showing research status.
+    """
+    lines = Text()
+    lines.append("  Researching answer...\n\n", style="bold")
+    lines.append("  This may take a moment", style="dim")
+
+    return Panel(lines, title="Researching", border_style="magenta")
 
 
 def make_presentation_panel(
@@ -138,3 +173,77 @@ def make_answer_panel(playing: bool = False) -> Panel:
 
     border = "green" if playing else "cyan"
     return Panel(lines, title="Answer", border_style=border)
+
+
+_STATE_PANELS = {
+    DiscussState.PREPARE: make_prepare_panel,
+    DiscussState.ENQUIRY: make_enquiry_panel,
+    DiscussState.PREPARE_ENQUIRY: make_prepare_enquiry_panel,
+}
+"""Static panel builders for states that don't need dynamic parameters."""
+
+
+class DiscussTUI:
+    """Rich TUI wrapper for the discuss state machine.
+
+    Wraps a DiscussRunner, observing state transitions via the
+    ``on_state_enter`` callback and rendering state-specific panels.
+    Engines remain logic-only; the TUI handles all visual feedback.
+
+    Attributes:
+        runner: The wrapped DiscussRunner instance.
+        console: Rich Console for output.
+    """
+
+    def __init__(self, runner: DiscussRunner, console: Console | None = None) -> None:
+        """Initialize the TUI wrapper.
+
+        Args:
+            runner: DiscussRunner to wrap.
+            console: Optional Rich Console (created if not provided).
+        """
+        self.runner = runner
+        self.console = console or Console()
+        self.runner.on_state_enter = self._on_state_enter
+
+    async def run(self) -> None:
+        """Run the discuss session with TUI display.
+
+        Shows a welcome banner, renders state panels during the
+        session, and prints a goodbye message on exit.
+        """
+        self._print_header()
+        await self.runner.run()
+        self._print_footer()
+
+    def _on_state_enter(self, state: DiscussState) -> None:
+        """Callback fired at the start of each state machine iteration.
+
+        Renders the appropriate panel for the current state.
+
+        Args:
+            state: The state being entered.
+        """
+        panel_fn = _STATE_PANELS.get(state)
+        if panel_fn:
+            self.console.print(panel_fn())
+        elif state == DiscussState.PRESENTATION:
+            # Presentation panel is rendered by the engine's _wait_for_start
+            pass
+        elif state == DiscussState.PRESENTATION_ENQUIRY:
+            # Answer panel is rendered by the engine's _wait_for_start
+            pass
+
+    def _print_header(self) -> None:
+        """Print session header with name and initial state."""
+        session = self.runner.session
+        header = Text()
+        header.append("  neev discuss", style="bold cyan")
+        header.append(f"  {session.name}", style="bold")
+        header.append(f"  ({session.state.value})", style="dim")
+        self.console.print(Panel(header, border_style="cyan"))
+
+    def _print_footer(self) -> None:
+        """Print session complete message."""
+        session = self.runner.session
+        self.console.print(f"\n[bold]Session complete:[/bold] {session.name}")

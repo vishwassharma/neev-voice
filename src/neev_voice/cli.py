@@ -761,12 +761,7 @@ async def _discuss_async(
             console.print(f"[yellow]Warning:[/yellow] Provider setup: {e}")
         # Continue without providers — prepare state doesn't need them
 
-    console.print(
-        f"[bold cyan]Session:[/bold cyan] {session.name} | "
-        f"[bold cyan]State:[/bold cyan] {session.state}"
-    )
-
-    # Run the state machine
+    # Run the state machine with TUI
     runner = DiscussRunner(
         session=session,
         settings=settings,
@@ -775,13 +770,16 @@ async def _discuss_async(
         stt_provider=stt_provider,
     )
 
+    from neev_voice.discuss.tui import DiscussTUI
+
+    tui = DiscussTUI(runner, console=console)
+
     try:
-        await runner.run()
+        await tui.run()
     except (NeevError, RuntimeError) as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1) from None
 
-    console.print(f"\n[bold]Session complete:[/bold] {session.name}")
     if verbose:
         console.print(f"[dim]Session dir: {session_mgr.session_dir(session.name)}[/dim]")
 

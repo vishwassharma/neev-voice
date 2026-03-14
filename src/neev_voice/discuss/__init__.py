@@ -18,12 +18,14 @@ from neev_voice.discuss.presentation import PresentationEngine, PresentationResu
 from neev_voice.discuss.runner import DiscussRunner
 from neev_voice.discuss.session import SessionInfo, SessionManager
 from neev_voice.discuss.state import DiscussState, StateSnapshot, StateStack
+from neev_voice.discuss.tui import DiscussTUI
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
     "ConceptInfo",
     "DiscussRunner",
     "DiscussState",
+    "DiscussTUI",
     "EnquiryEngine",
     "EnquiryResult",
     "PrepareEngine",

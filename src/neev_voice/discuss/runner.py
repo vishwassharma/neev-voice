@@ -7,6 +7,7 @@ state stack push/pop, and session persistence.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import structlog
@@ -54,6 +55,7 @@ class DiscussRunner:
         session_manager: SessionManager,
         tts_provider: TTSProvider | None = None,
         stt_provider: STTProvider | None = None,
+        on_state_enter: Callable[[DiscussState], None] | None = None,
     ) -> None:
         """Initialize the state machine runner.
 
@@ -63,12 +65,15 @@ class DiscussRunner:
             session_manager: Session persistence manager.
             tts_provider: Optional TTS provider for audio synthesis.
             stt_provider: Optional STT provider for voice transcription.
+            on_state_enter: Optional callback fired at the start of each
+                state machine iteration, before the handler runs.
         """
         self.session = session
         self.settings = settings
         self.session_manager = session_manager
         self.tts_provider = tts_provider
         self.stt_provider = stt_provider
+        self.on_state_enter = on_state_enter
 
         # Transient state (not persisted, used between transitions)
         self._current_enquiry: EnquiryResult | None = None
@@ -91,6 +96,9 @@ class DiscussRunner:
         while True:
             state = self.session.state
             logger.info("discuss_runner_state", state=state)
+
+            if self.on_state_enter:
+                self.on_state_enter(state)
 
             match state:
                 case DiscussState.PREPARE:

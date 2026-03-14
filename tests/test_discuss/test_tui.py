@@ -1,13 +1,22 @@
-"""Tests for discuss TUI panel builders."""
+"""Tests for discuss TUI panel builders and DiscussTUI wrapper."""
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+from rich.console import Console
 from rich.panel import Panel
 
 from neev_voice.audio.keyboard import RecordingState
+from neev_voice.discuss.session import SessionManager
+from neev_voice.discuss.state import DiscussState
 from neev_voice.discuss.tui import (
+    DiscussTUI,
     make_answer_panel,
     make_enquiry_panel,
+    make_prepare_enquiry_panel,
+    make_prepare_panel,
     make_presentation_panel,
     make_recording_panel,
 )
@@ -139,3 +148,107 @@ class TestMakeAnswerPanel:
         """Panel title is Answer."""
         panel = make_answer_panel()
         assert panel.title == "Answer"
+
+
+class TestMakePreparePanel:
+    """Tests for make_prepare_panel."""
+
+    def test_returns_panel(self) -> None:
+        """Returns a Rich Panel."""
+        panel = make_prepare_panel()
+        assert isinstance(panel, Panel)
+
+    def test_shows_analyzing(self) -> None:
+        """Panel shows analyzing message."""
+        panel = make_prepare_panel()
+        assert "Analyzing" in panel.renderable.plain
+
+    def test_title_is_preparing(self) -> None:
+        """Panel title is Preparing."""
+        panel = make_prepare_panel()
+        assert panel.title == "Preparing"
+
+
+class TestMakePrepareEnquiryPanel:
+    """Tests for make_prepare_enquiry_panel."""
+
+    def test_returns_panel(self) -> None:
+        """Returns a Rich Panel."""
+        panel = make_prepare_enquiry_panel()
+        assert isinstance(panel, Panel)
+
+    def test_shows_researching(self) -> None:
+        """Panel shows researching message."""
+        panel = make_prepare_enquiry_panel()
+        assert "Researching" in panel.renderable.plain
+
+
+class TestDiscussTUI:
+    """Tests for DiscussTUI wrapper class."""
+
+    def _make_runner(self, tmp_path: Path) -> MagicMock:
+        """Create a mock runner with a real session."""
+        mgr = SessionManager(base_dir=tmp_path / "discuss")
+        session = mgr.create_session("test-tui", research_path="/r", source_path="/s")
+        runner = MagicMock()
+        runner.session = session
+        runner.run = AsyncMock()
+        runner.on_state_enter = None
+        return runner
+
+    def test_init_sets_callback(self, tmp_path: Path) -> None:
+        """DiscussTUI sets on_state_enter on the runner."""
+        runner = self._make_runner(tmp_path)
+        DiscussTUI(runner)
+        assert runner.on_state_enter is not None
+        assert callable(runner.on_state_enter)
+
+    def test_init_accepts_console(self, tmp_path: Path) -> None:
+        """DiscussTUI accepts a custom console."""
+        runner = self._make_runner(tmp_path)
+        console = Console()
+        tui = DiscussTUI(runner, console=console)
+        assert tui.console is console
+
+    async def test_run_calls_runner(self, tmp_path: Path) -> None:
+        """run() delegates to runner.run()."""
+        runner = self._make_runner(tmp_path)
+        tui = DiscussTUI(runner, console=Console(file=open("/dev/null", "w")))  # noqa: SIM115
+        await tui.run()
+        runner.run.assert_called_once()
+
+    def test_on_state_enter_prepare(self, tmp_path: Path) -> None:
+        """Prepare state renders prepare panel."""
+        runner = self._make_runner(tmp_path)
+        console = Console(file=open("/dev/null", "w"))  # noqa: SIM115
+        tui = DiscussTUI(runner, console=console)
+        # Should not raise
+        tui._on_state_enter(DiscussState.PREPARE)
+
+    def test_on_state_enter_enquiry(self, tmp_path: Path) -> None:
+        """Enquiry state renders enquiry panel."""
+        runner = self._make_runner(tmp_path)
+        console = Console(file=open("/dev/null", "w"))  # noqa: SIM115
+        tui = DiscussTUI(runner, console=console)
+        tui._on_state_enter(DiscussState.ENQUIRY)
+
+    def test_on_state_enter_prepare_enquiry(self, tmp_path: Path) -> None:
+        """Prepare-enquiry state renders research panel."""
+        runner = self._make_runner(tmp_path)
+        console = Console(file=open("/dev/null", "w"))  # noqa: SIM115
+        tui = DiscussTUI(runner, console=console)
+        tui._on_state_enter(DiscussState.PREPARE_ENQUIRY)
+
+    def test_on_state_enter_presentation_no_crash(self, tmp_path: Path) -> None:
+        """Presentation state does not crash (panel rendered by engine)."""
+        runner = self._make_runner(tmp_path)
+        console = Console(file=open("/dev/null", "w"))  # noqa: SIM115
+        tui = DiscussTUI(runner, console=console)
+        tui._on_state_enter(DiscussState.PRESENTATION)
+
+    def test_on_state_enter_presentation_enquiry_no_crash(self, tmp_path: Path) -> None:
+        """Presentation-enquiry state does not crash."""
+        runner = self._make_runner(tmp_path)
+        console = Console(file=open("/dev/null", "w"))  # noqa: SIM115
+        tui = DiscussTUI(runner, console=console)
+        tui._on_state_enter(DiscussState.PRESENTATION_ENQUIRY)

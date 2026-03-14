@@ -70,6 +70,16 @@ class TestDiscussRunner:
         assert runner.settings is settings
         assert runner.session_manager is session_manager
 
+    def test_init_defaults_callback_none(
+        self,
+        session: SessionInfo,
+        settings: MagicMock,
+        session_manager: SessionManager,
+    ) -> None:
+        """Runner defaults on_state_enter to None."""
+        runner = DiscussRunner(session, settings, session_manager)
+        assert runner.on_state_enter is None
+
     def test_init_with_providers(
         self,
         session: SessionInfo,
@@ -679,6 +689,40 @@ class TestRunIntegration:
         assert runner.session.prepare_complete is True
         mock_prep.run.assert_called_once()
         mock_pres.run.assert_called_once()
+
+    @patch("neev_voice.discuss.runner.PrepareEngine")
+    @patch("neev_voice.discuss.runner.PresentationEngine")
+    async def test_on_state_enter_called_each_iteration(
+        self,
+        mock_pres_cls: MagicMock,
+        mock_prep_cls: MagicMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        session_manager: SessionManager,
+    ) -> None:
+        """on_state_enter callback fires at the start of each loop iteration."""
+        callback = MagicMock()
+        runner = DiscussRunner(
+            session,
+            settings,
+            session_manager,
+            on_state_enter=callback,
+        )
+
+        mock_prep = MagicMock()
+        mock_prep.run = AsyncMock(return_value=[ConceptInfo(index=0, title="C1", description="D1")])
+        mock_prep_cls.return_value = mock_prep
+
+        mock_pres = MagicMock()
+        mock_pres.run = AsyncMock(return_value=PresentationResult(completed=True))
+        mock_pres_cls.return_value = mock_pres
+
+        await runner.run()
+
+        # Called for PREPARE and PRESENTATION states
+        assert callback.call_count == 2
+        callback.assert_any_call(DiscussState.PREPARE)
+        callback.assert_any_call(DiscussState.PRESENTATION)
 
     @patch("neev_voice.discuss.runner.PrepareEngine")
     @patch("neev_voice.discuss.runner.PresentationEngine")
