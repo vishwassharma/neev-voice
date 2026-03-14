@@ -68,64 +68,59 @@ class ConceptInfo:
 PREPARE_PLAN_PROMPT = """\
 You are analyzing research documents for an interactive learning system.
 
-Given the following document, perform a detailed structural analysis:
+Read and analyze ALL the following documents to extract a unified set of concepts:
 
-1. Identify the key concepts explained in this document
-2. Order them from foundational to advanced (progressive learning)
-3. For each concept, note its dependencies on other concepts
-4. Note which parts explain individual concepts vs. how concepts integrate
+{doc_list}
 
-Output your analysis as JSON with this structure:
+Requirements:
+1. Read each document listed above using the Read tool
+2. Extract ALL key concepts across ALL documents
+3. Categorize related concepts together — group by theme/topic
+4. Order from foundational to advanced (progressive learning sequence)
+5. Identify dependencies between concepts (which must be understood first)
+6. Each concept must reference the source document it came from
+7. Avoid duplicate or overlapping concepts — merge related ideas
+
+Output your analysis as a single JSON object with this exact structure:
 {{
   "concepts": [
     {{
       "index": 0,
       "title": "Concept Name",
-      "description": "One-line description",
-      "source_file": "{source_file}",
+      "description": "One-line description of what this concept covers",
+      "source_file": "filename.md",
       "dependencies": []
     }}
   ]
 }}
 
-Document path: {doc_path}
-Document content follows:
----
-{content}
----
+Important: Output ONLY the JSON object, no other text.
 """
 
-PREPARE_TUTORIAL_PROMPT = """\
+PREPARE_CONTENT_PROMPT = """\
 You are generating educational content for an interactive learning system.
 
-Based on the following concept from the research documents, generate:
+The concept index is at: {concepts_json_path}
+Research documents are at: {research_path}
 
-1. A **tutorial** (detailed explanation with examples, suitable for reading)
-2. An **explainer** (brief 2-3 paragraph overview)
-3. A **transcript** (TTS-ready text optimized for speech synthesis — use natural
-   spoken language, avoid markdown formatting, spell out abbreviations)
+For each concept listed below, generate THREE files in the output directory:
 
-Context: This concept is part of a progressive learning sequence.
-Previously covered concepts: {previous_concepts}
+1. {tutorials_dir}/{{prefix}}.md — Detailed tutorial with examples
+2. {explainers_dir}/{{prefix}}.md — Brief 2-3 paragraph overview
+3. {transcripts_dir}/{{prefix}}.md — TTS-ready spoken text (natural spoken \
+language, NO markdown formatting, spell out abbreviations)
 
-Concept: {concept_title}
-Description: {concept_description}
-Source document: {source_file}
+Where prefix for each concept is shown below.
 
-Relevant source content:
----
-{relevant_content}
----
+Concepts to process:
+{concepts_list}
 
-Output your response with these exact sections:
-## Tutorial
-[detailed tutorial content]
-
-## Explainer
-[brief explainer content]
-
-## Transcript
-[TTS-ready spoken text]
+Instructions:
+- Read the concept index and relevant source documents first
+- For each concept, consider previously covered concepts for context
+- Write all three files for each concept using the Write tool
+- Process concepts using parallel agents where possible for speed
+- Each file should contain ONLY the content (no headers or metadata)
 """
 
 
@@ -163,10 +158,8 @@ class PrepareEngine:
         """Run the full prepare phase.
 
         1. Check for existing concepts.json (skip Phase 1 if present)
-        2. Scan research_path for documents
-        3. Analyze each document for concepts
-        4. Generate tutorials, explainers, transcripts (skip existing)
-        5. Save concepts.json and output files
+        2. Extract concepts from ALL documents in a single Claude call
+        3. Generate all content in a single Claude call (parallel via agents)
 
         Returns:
             Ordered list of extracted ConceptInfo objects.
@@ -181,7 +174,7 @@ class PrepareEngine:
         if all_concepts:
             logger.info("prepare_phase1_complete", existing_concepts=len(all_concepts))
         else:
-            # Phase 1: Extract concepts from all documents
+            # Phase 1: Extract concepts from ALL documents in one call
             docs = self._find_documents()
             if not docs:
                 logger.warning("prepare_engine_no_documents", path=self.session.research_path)
@@ -189,24 +182,14 @@ class PrepareEngine:
 
             logger.info("prepare_engine_found_documents", count=len(docs))
 
-            all_concepts = []
-            for doc in docs:
-                concepts = await self._extract_concepts(doc)
-                # Re-index concepts to be globally sequential
-                offset = len(all_concepts)
-                for c in concepts:
-                    c.index = offset + c.index
-                    c.dependencies = [d + offset for d in c.dependencies]
-                all_concepts.extend(concepts)
-
+            all_concepts = await self._extract_all_concepts(docs)
             if not all_concepts:
                 logger.warning("prepare_engine_no_concepts_extracted")
                 return []
 
-            # Save concept index
             self._save_concepts(all_concepts)
 
-        # Phase 2: Generate content for each concept (skip existing)
+        # Phase 2: Generate content for pending concepts in one call
         pending = [c for c in all_concepts if not self._concept_content_exists(c.index)]
         if pending:
             logger.info(
@@ -215,9 +198,7 @@ class PrepareEngine:
                 pending=len(pending),
                 skipped=len(all_concepts) - len(pending),
             )
-            for concept in pending:
-                previous = [c.title for c in all_concepts[: concept.index]]
-                await self._generate_content(concept, previous)
+            await self._generate_all_content(pending)
         else:
             logger.info("prepare_phase2_complete", total=len(all_concepts))
 
@@ -248,6 +229,61 @@ class PrepareEngine:
             for f in sorted(research_path.rglob("*"))
             if f.is_file() and f.suffix.lower() in extensions
         ]
+
+    async def _extract_all_concepts(self, docs: list[Path]) -> list[ConceptInfo]:
+        """Extract concepts from all documents in a single Claude CLI call.
+
+        Sends all document paths to Claude for unified analysis, producing
+        a properly categorized and ordered concept list across all sources.
+
+        Args:
+            docs: List of document file paths to analyze.
+
+        Returns:
+            Ordered list of extracted ConceptInfo objects.
+        """
+        doc_list = "\n".join(f"- {doc}" for doc in docs)
+        prompt = PREPARE_PLAN_PROMPT.format(doc_list=doc_list)
+        response = await self._run_claude(prompt)
+
+        # Parse unified response — source_file comes from Claude's analysis
+        return self._parse_concepts_response(response, docs[0].name if docs else "unknown")
+
+    async def _generate_all_content(self, pending: list[ConceptInfo]) -> None:
+        """Generate content for all pending concepts in a single Claude CLI call.
+
+        Instructs Claude to read concepts.json and research documents, then
+        write tutorial/explainer/transcript files for each pending concept.
+        Claude handles parallelism internally via agents.
+
+        Args:
+            pending: List of concepts needing content generation.
+        """
+        concepts_list_parts = []
+        for c in pending:
+            prefix = f"{c.index:03d}_{_slugify(c.title)}"
+            concepts_list_parts.append(
+                f'- [{c.index}] "{c.title}" (source: {c.source_file}) → prefix: {prefix}'
+            )
+        concepts_list = "\n".join(concepts_list_parts)
+
+        prompt = PREPARE_CONTENT_PROMPT.format(
+            concepts_json_path=str(self.prepare_dir / "concepts.json"),
+            research_path=self.session.research_path,
+            tutorials_dir=str(self.prepare_dir / "tutorials"),
+            explainers_dir=str(self.prepare_dir / "explainers"),
+            transcripts_dir=str(self.prepare_dir / "transcripts"),
+            concepts_list=concepts_list,
+        )
+
+        await self._run_claude(prompt)
+
+        # Verify files were created
+        for c in pending:
+            if self._concept_content_exists(c.index):
+                logger.info("prepare_content_saved", concept=c.title, index=c.index)
+            else:
+                logger.warning("prepare_content_missing", concept=c.title, index=c.index)
 
     def _load_existing_concepts(self) -> list[ConceptInfo] | None:
         """Load previously extracted concepts if they exist.
@@ -297,35 +333,6 @@ class PrepareEngine:
         content = json.dumps([c.to_dict() for c in concepts], indent=2, default=str)
         concepts_file.write_text(content + "\n", encoding="utf-8")
 
-    async def _extract_concepts(self, doc_path: Path) -> list[ConceptInfo]:
-        """Extract concepts from a single document using Claude CLI.
-
-        Args:
-            doc_path: Path to the input document.
-
-        Returns:
-            List of extracted concepts from this document.
-        """
-        try:
-            content = doc_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            logger.warning("prepare_skip_binary_file", path=str(doc_path))
-            return []
-
-        # Truncate very large documents
-        max_chars = self.settings.discuss_max_doc_chars
-        if len(content) > max_chars:
-            content = content[:max_chars] + "\n\n[... truncated ...]"
-
-        prompt = PREPARE_PLAN_PROMPT.format(
-            doc_path=str(doc_path),
-            source_file=doc_path.name,
-            content=content,
-        )
-
-        response = await self._run_claude(prompt)
-        return self._parse_concepts_response(response, doc_path.name)
-
     def _parse_concepts_response(self, response: str, source_file: str) -> list[ConceptInfo]:
         """Parse Claude's concept extraction response.
 
@@ -370,36 +377,6 @@ class PrepareEngine:
                 source_file=source_file,
             )
         ]
-
-    async def _generate_content(self, concept: ConceptInfo, previous_concepts: list[str]) -> None:
-        """Generate tutorial, explainer, and transcript for a concept.
-
-        Args:
-            concept: The concept to generate content for.
-            previous_concepts: Titles of previously covered concepts.
-        """
-        # Read relevant source content
-        source_path = Path(self.session.research_path) / concept.source_file
-        relevant_content = ""
-        if source_path.exists():
-            try:
-                relevant_content = source_path.read_text(encoding="utf-8")
-                max_source = self.settings.discuss_max_source_chars
-                if len(relevant_content) > max_source:
-                    relevant_content = relevant_content[:max_source] + "\n[... truncated ...]"
-            except UnicodeDecodeError:
-                relevant_content = "[binary file — not readable]"
-
-        prompt = PREPARE_TUTORIAL_PROMPT.format(
-            concept_title=concept.title,
-            concept_description=concept.description,
-            source_file=concept.source_file,
-            previous_concepts=", ".join(previous_concepts) if previous_concepts else "none",
-            relevant_content=relevant_content,
-        )
-
-        response = await self._run_claude(prompt)
-        self._save_content(concept, response)
 
     def _save_content(self, concept: ConceptInfo, response: str) -> None:
         """Parse and save tutorial, explainer, and transcript from response.

@@ -332,10 +332,96 @@ class TestConceptContentExists:
         assert engine._concept_content_exists(1) is True
 
 
+class TestExtractAllConcepts:
+    """Tests for _extract_all_concepts()."""
+
+    @patch.object(PrepareEngine, "_run_claude")
+    async def test_extracts_from_all_docs_in_single_call(
+        self,
+        mock_claude: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Single Claude call processes all documents."""
+        mock_claude.return_value = json.dumps(
+            {
+                "concepts": [
+                    {"index": 0, "title": "A1", "description": "From A", "source_file": "a.md"},
+                    {"index": 1, "title": "B1", "description": "From B", "source_file": "b.md"},
+                ]
+            }
+        )
+
+        engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
+        docs = [Path("/docs/a.md"), Path("/docs/b.md")]
+        result = await engine._extract_all_concepts(docs)
+
+        assert len(result) == 2
+        assert result[0].title == "A1"
+        assert result[1].title == "B1"
+        # Single call, not one per document
+        mock_claude.assert_called_once()
+        prompt = mock_claude.call_args[0][0]
+        assert "/docs/a.md" in prompt
+        assert "/docs/b.md" in prompt
+
+
+class TestGenerateAllContent:
+    """Tests for _generate_all_content()."""
+
+    @patch.object(PrepareEngine, "_run_claude")
+    async def test_single_call_for_all_pending(
+        self,
+        mock_claude: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Single Claude call for all pending concepts."""
+        mock_claude.return_value = ""
+
+        engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
+        engine._ensure_dirs()
+        pending = [
+            ConceptInfo(index=0, title="Concept A", description="Desc A"),
+            ConceptInfo(index=1, title="Concept B", description="Desc B"),
+        ]
+        await engine._generate_all_content(pending)
+
+        mock_claude.assert_called_once()
+        prompt = mock_claude.call_args[0][0]
+        assert "Concept A" in prompt
+        assert "Concept B" in prompt
+        assert "000_concept-a" in prompt
+        assert "001_concept-b" in prompt
+
+    @patch.object(PrepareEngine, "_run_claude")
+    async def test_prompt_includes_output_paths(
+        self,
+        mock_claude: AsyncMock,
+        session: SessionInfo,
+        settings: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Prompt includes correct output directory paths."""
+        mock_claude.return_value = ""
+
+        engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
+        engine._ensure_dirs()
+        pending = [ConceptInfo(index=0, title="Test", description="D")]
+        await engine._generate_all_content(pending)
+
+        prompt = mock_claude.call_args[0][0]
+        assert str(tmp_path / "tutorials") in prompt
+        assert str(tmp_path / "explainers") in prompt
+        assert str(tmp_path / "transcripts") in prompt
+
+
 class TestPrepareEngineRun:
     """Tests for PrepareEngine.run() method."""
 
-    @patch.object(PrepareEngine, "_generate_content")
+    @patch.object(PrepareEngine, "_generate_all_content")
     async def test_run_resumes_existing_skips_completed(
         self,
         mock_generate: AsyncMock,
@@ -347,7 +433,6 @@ class TestPrepareEngineRun:
         engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
         engine._ensure_dirs()
 
-        # Save concepts.json
         concepts_data = [
             {"index": 0, "title": "Done", "description": "D"},
             {"index": 1, "title": "Pending", "description": "P"},
@@ -361,13 +446,13 @@ class TestPrepareEngineRun:
         result = await engine.run()
         assert len(result) == 2
 
-        # Only concept 1 should have _generate_content called
+        # Only pending concepts passed to batch generation
         mock_generate.assert_called_once()
-        call_args = mock_generate.call_args
-        assert call_args[0][0].index == 1
-        assert call_args[0][0].title == "Pending"
+        pending_arg = mock_generate.call_args[0][0]
+        assert len(pending_arg) == 1
+        assert pending_arg[0].index == 1
 
-    @patch.object(PrepareEngine, "_generate_content")
+    @patch.object(PrepareEngine, "_generate_all_content")
     async def test_run_resumes_all_complete(
         self,
         mock_generate: AsyncMock,
@@ -398,19 +483,19 @@ class TestPrepareEngineRun:
         assert result == []
 
     @patch.object(PrepareEngine, "_run_claude")
-    async def test_run_extracts_and_generates(
+    async def test_run_single_extraction_call(
         self,
         mock_claude: AsyncMock,
         session: SessionInfo,
         settings: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """run() extracts concepts and generates content."""
-        # Create a research document
+        """run() uses single Claude call for concept extraction."""
         research_dir = Path(session.research_path)
         (research_dir / "guide.md").write_text("# Guide\nContent here.")
 
-        # Mock Claude responses
+        # Phase 1: extraction (single call)
+        # Phase 2: content generation (single call, writes files via Claude)
         extract_response = json.dumps(
             {
                 "concepts": [
@@ -418,21 +503,14 @@ class TestPrepareEngineRun:
                         "index": 0,
                         "title": "Intro",
                         "description": "Introduction",
+                        "source_file": "guide.md",
                         "dependencies": [],
                     }
                 ]
             }
         )
-        content_response = """## Tutorial
-Intro tutorial.
-
-## Explainer
-Brief intro.
-
-## Transcript
-Welcome to the introduction."""
-
-        mock_claude.side_effect = [extract_response, content_response]
+        # Phase 2 response — Claude writes files directly, response is empty
+        mock_claude.side_effect = [extract_response, ""]
 
         engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
         result = await engine.run()
@@ -440,33 +518,38 @@ Welcome to the introduction."""
         assert len(result) == 1
         assert result[0].title == "Intro"
         assert (tmp_path / "concepts.json").exists()
-        assert (tmp_path / "transcripts" / "000_intro.md").exists()
+        # Two Claude calls total: 1 extraction + 1 content generation
+        assert mock_claude.call_count == 2
 
     @patch.object(PrepareEngine, "_run_claude")
-    async def test_run_multiple_documents(
+    async def test_run_multiple_documents_single_extraction(
         self,
         mock_claude: AsyncMock,
         session: SessionInfo,
         settings: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """run() processes multiple documents with global indexing."""
+        """run() extracts concepts from multiple docs in one call."""
         research_dir = Path(session.research_path)
         (research_dir / "a.md").write_text("Doc A")
         (research_dir / "b.md").write_text("Doc B")
 
-        # First doc: 1 concept, second doc: 1 concept
-        responses = [
-            json.dumps({"concepts": [{"index": 0, "title": "A1", "description": "From A"}]}),
-            json.dumps({"concepts": [{"index": 0, "title": "B1", "description": "From B"}]}),
-            "## Tutorial\nA1 content\n## Explainer\nBrief\n## Transcript\nSpoken",
-            "## Tutorial\nB1 content\n## Explainer\nBrief\n## Transcript\nSpoken",
-        ]
-        mock_claude.side_effect = responses
+        # Single extraction call returns concepts from both docs
+        extract_response = json.dumps(
+            {
+                "concepts": [
+                    {"index": 0, "title": "A1", "description": "From A", "source_file": "a.md"},
+                    {"index": 1, "title": "B1", "description": "From B", "source_file": "b.md"},
+                ]
+            }
+        )
+        mock_claude.side_effect = [extract_response, ""]
 
         engine = PrepareEngine(session, settings, prepare_dir=tmp_path)
         result = await engine.run()
 
         assert len(result) == 2
         assert result[0].index == 0
-        assert result[1].index == 1  # Re-indexed globally
+        assert result[1].index == 1
+        # Only 2 calls: 1 extraction + 1 content generation (not 4 as before)
+        assert mock_claude.call_count == 2

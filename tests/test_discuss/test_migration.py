@@ -8,6 +8,7 @@ from pathlib import Path
 from neev_voice.discuss.migration import (
     CURRENT_SCHEMA_VERSION,
     _migrate_v1_to_v2,
+    migrate_concepts_file,
     migrate_session_data,
 )
 from neev_voice.discuss.session import SessionInfo, SessionManager
@@ -49,7 +50,105 @@ class TestMigrateV1ToV2:
         assert result["name"] == "test"
         assert result["state"] == "presentation"
         assert result["prepare_complete"] is True
-        assert result["concepts"] == [{"title": "C1"}]
+        # Concepts are normalized with defaults
+        assert len(result["concepts"]) == 1
+        assert result["concepts"][0]["title"] == "C1"
+        assert result["concepts"][0]["source_file"] == ""
+        assert result["concepts"][0]["dependencies"] == []
+
+    def test_normalizes_concepts_in_session(self) -> None:
+        """Migration adds missing fields to concepts in session data."""
+        data = {
+            "name": "old",
+            "concepts": [
+                {"title": "C1"},
+                {"index": 5, "title": "C2"},
+            ],
+        }
+        result = _migrate_v1_to_v2(data)
+        c0 = result["concepts"][0]
+        assert c0["index"] == 0  # Re-indexed
+        assert c0["source_file"] == ""
+        assert c0["dependencies"] == []
+        assert c0["description"] == "C1"
+
+        c1 = result["concepts"][1]
+        assert c1["index"] == 1  # Re-indexed from 5
+
+
+class TestMigrateConceptsFile:
+    """Tests for migrate_concepts_file."""
+
+    def test_adds_missing_fields(self, tmp_path: Path) -> None:
+        """Adds source_file, dependencies, description to concepts."""
+        concepts = [{"index": 0, "title": "Basics"}]
+        path = tmp_path / "concepts.json"
+        path.write_text(json.dumps(concepts))
+
+        result = migrate_concepts_file(path)
+        assert result is True
+
+        data = json.loads(path.read_text())
+        assert data[0]["source_file"] == ""
+        assert data[0]["dependencies"] == []
+        assert data[0]["description"] == "Basics"
+
+    def test_reindexes_concepts(self, tmp_path: Path) -> None:
+        """Fixes non-sequential indices."""
+        concepts = [
+            {
+                "index": 5,
+                "title": "A",
+                "source_file": "a.md",
+                "dependencies": [],
+                "description": "D",
+            },
+            {
+                "index": 10,
+                "title": "B",
+                "source_file": "b.md",
+                "dependencies": [],
+                "description": "D",
+            },
+        ]
+        path = tmp_path / "concepts.json"
+        path.write_text(json.dumps(concepts))
+
+        result = migrate_concepts_file(path)
+        assert result is True
+
+        data = json.loads(path.read_text())
+        assert data[0]["index"] == 0
+        assert data[1]["index"] == 1
+
+    def test_already_normalized_is_noop(self, tmp_path: Path) -> None:
+        """Returns False when concepts already have all fields."""
+        concepts = [
+            {
+                "index": 0,
+                "title": "A",
+                "description": "D",
+                "source_file": "a.md",
+                "dependencies": [],
+            },
+        ]
+        path = tmp_path / "concepts.json"
+        path.write_text(json.dumps(concepts))
+
+        result = migrate_concepts_file(path)
+        assert result is False
+
+    def test_nonexistent_file_returns_false(self, tmp_path: Path) -> None:
+        """Returns False when file doesn't exist."""
+        result = migrate_concepts_file(tmp_path / "missing.json")
+        assert result is False
+
+    def test_corrupt_file_returns_false(self, tmp_path: Path) -> None:
+        """Returns False for corrupt JSON."""
+        path = tmp_path / "concepts.json"
+        path.write_text("not json")
+        result = migrate_concepts_file(path)
+        assert result is False
 
 
 class TestMigrateSessionData:

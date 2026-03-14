@@ -517,15 +517,21 @@ def _list_sessions(session_mgr: SessionManager) -> None:
 
 
 def _migrate_sessions(session_mgr: SessionManager) -> None:
-    """Migrate all sessions to the latest schema version.
+    """Migrate all sessions and their concepts to the latest schema.
 
     Loads each session (which triggers auto-migration in load_session)
-    and reports the results.
+    and also migrates concepts.json files in each session's prepare
+    directory.
 
     Args:
         session_mgr: Session manager to query.
     """
-    from neev_voice.discuss.migration import CURRENT_SCHEMA_VERSION
+    import json
+
+    from neev_voice.discuss.migration import (
+        CURRENT_SCHEMA_VERSION,
+        migrate_concepts_file,
+    )
 
     names = session_mgr.list_sessions()
     if not names:
@@ -534,9 +540,6 @@ def _migrate_sessions(session_mgr: SessionManager) -> None:
 
     migrated_count = 0
     for name in names:
-        # Read raw JSON to check version before load triggers migration
-        import json
-
         session_file = session_mgr.session_file(name)
         try:
             raw = json.loads(session_file.read_text(encoding="utf-8"))
@@ -545,19 +548,28 @@ def _migrate_sessions(session_mgr: SessionManager) -> None:
             continue
 
         old_version = raw.get("schema_version", 1)
-        if old_version >= CURRENT_SCHEMA_VERSION:
-            console.print(f"  [dim]ok[/dim]   {name} (v{old_version})")
+        session_migrated = old_version < CURRENT_SCHEMA_VERSION
+
+        # load_session triggers session migration + auto-save
+        session = session_mgr.load_session(name)
+        if not session:
+            console.print(f"  [red]failed[/red]  {name}")
             continue
 
-        # load_session triggers migration + auto-save
-        session = session_mgr.load_session(name)
-        if session:
-            console.print(
-                f"  [green]migrated[/green] {name} (v{old_version} → v{session.schema_version})"
-            )
+        # Migrate concepts.json in prepare directory
+        concepts_path = session_mgr.session_dir(name) / "prepare" / "concepts.json"
+        concepts_migrated = migrate_concepts_file(concepts_path)
+
+        if session_migrated or concepts_migrated:
+            parts = []
+            if session_migrated:
+                parts.append(f"session v{old_version}→v{session.schema_version}")
+            if concepts_migrated:
+                parts.append("concepts")
+            console.print(f"  [green]migrated[/green] {name} ({', '.join(parts)})")
             migrated_count += 1
         else:
-            console.print(f"  [red]failed[/red]  {name}")
+            console.print(f"  [dim]ok[/dim]   {name} (v{session.schema_version})")
 
     if migrated_count:
         console.print(f"\n[bold green]Migrated {migrated_count} session(s).[/bold green]")
