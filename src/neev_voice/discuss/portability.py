@@ -215,7 +215,12 @@ def _add_directory_to_zip(zf: zipfile.ZipFile, dir_path: Path, prefix: str) -> N
     for file_path in sorted(dir_path.rglob("*")):
         if file_path.is_file():
             arcname = f"{prefix}/{file_path.relative_to(dir_path)}"
-            zf.write(file_path, arcname)
+            # Fix timestamps before 1980 (ZIP format minimum)
+            info = zipfile.ZipInfo.from_file(file_path, arcname)
+            if info.date_time[0] < 1980:
+                info.date_time = (1980, 1, 1, 0, 0, 0)
+            with open(file_path, "rb") as f:
+                zf.writestr(info, f.read())
 
 
 def _load_and_remap_session(
