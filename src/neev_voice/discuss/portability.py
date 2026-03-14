@@ -53,7 +53,9 @@ def export_session(
         raise FileNotFoundError(f"Session '{session_name}' not found")
 
     session_dir = session_manager.session_dir(session_name)
-    output_path = output_path or Path.cwd()
+    import tempfile
+
+    output_path = output_path or Path(tempfile.gettempdir())
     output_path.mkdir(parents=True, exist_ok=True)
     zip_path = output_path / f"{session_name}.zip"
 

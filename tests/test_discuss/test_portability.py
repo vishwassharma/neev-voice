@@ -206,17 +206,16 @@ class TestExportSession:
         with pytest.raises(FileNotFoundError, match="ghost"):
             export_session(manager, "ghost")
 
-    def test_export_defaults_to_cwd(
+    def test_export_defaults_to_tmp(
         self,
         manager: SessionManager,
         session_with_content: SessionInfo,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
     ) -> None:
-        """export_session defaults output_path to cwd."""
-        monkeypatch.chdir(tmp_path)
+        """export_session defaults output_path to system temp directory."""
+        import tempfile
+
         zip_path = export_session(manager, "test-export")
-        assert zip_path.parent == tmp_path
+        assert zip_path.parent == Path(tempfile.gettempdir())
 
 
 class TestLoadAndRemapSession:
