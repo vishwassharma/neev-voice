@@ -124,21 +124,41 @@ class EnquiryEngine:
     async def _handle_voice(self) -> EnquiryResult:
         """Handle voice recording enquiry path.
 
-        Records audio via push-to-talk, transcribes via STT, and opens
-        editor for transcript review. If the user quits the editor
-        without saving, resets and returns to enquiry state.
+        Shows a Rich Live push-to-talk panel during recording (same
+        pattern as ``neev listen``). Records audio, transcribes via STT,
+        and opens editor for transcript review.
 
         Returns:
             EnquiryResult with captured voice query.
         """
+        from rich.console import Console
+        from rich.live import Live
+
+        from neev_voice.audio.keyboard import RecordingState
+        from neev_voice.discuss.tui import make_recording_panel
+
         if self.stt_provider is None:
             logger.warning("no_stt_provider_for_voice_enquiry")
             return self._handle_manual()
 
         recorder = AudioRecorder(settings=self.settings)
+        console = Console()
+
+        live = Live(
+            make_recording_panel(RecordingState.IDLE),
+            console=console,
+            refresh_per_second=4,
+        )
+
+        def update_display(state: RecordingState) -> None:
+            """Update Rich Live display with recording state."""
+            live.update(make_recording_panel(state))
 
         try:
-            segment = await recorder.record_push_to_talk()
+            with live:
+                segment = await recorder.record_push_to_talk(
+                    on_state_change=update_display,
+                )
         except RecordingCancelledError:
             logger.info("voice_enquiry_cancelled")
             return EnquiryResult(escaped=False, source="voice")

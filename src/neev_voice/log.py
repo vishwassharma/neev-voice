@@ -22,7 +22,9 @@ import structlog
 __all__ = ["configure_logging", "get_logger"]
 
 
-def configure_logging(*, json_logs: bool = False) -> None:
+def configure_logging(
+    *, json_logs: bool = False, log_file: str | None = None, quiet: bool = False
+) -> None:
     """Configure *structlog* for the application.
 
     Call once at startup (e.g. in the CLI entry-point) before any
@@ -33,6 +35,9 @@ def configure_logging(*, json_logs: bool = False) -> None:
             output suitable for log aggregation.  When ``False``
             (default) use ``ConsoleRenderer`` for colourful, readable
             terminal output.
+        log_file: Optional path to write logs to a file instead of stdout.
+        quiet: When ``True``, suppress all log output to stdout.
+            Logs are still written to ``log_file`` if provided.
     """
     shared_processors: list[structlog.types.Processor] = [
         structlog.processors.add_log_level,
@@ -47,10 +52,22 @@ def configure_logging(*, json_logs: bool = False) -> None:
     else:
         renderer = structlog.dev.ConsoleRenderer()
 
+    if quiet and not log_file:
+        # Discard all output
+        import io
+
+        factory = structlog.PrintLoggerFactory(file=io.StringIO())
+    elif log_file:
+        factory = structlog.PrintLoggerFactory(
+            file=open(log_file, "a", encoding="utf-8")  # noqa: SIM115
+        )
+    else:
+        factory = structlog.PrintLoggerFactory()
+
     structlog.configure(
         processors=[*shared_processors, renderer],
         wrapper_class=structlog.stdlib.BoundLogger,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=factory,
         cache_logger_on_first_use=True,
     )
 

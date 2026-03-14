@@ -676,7 +676,7 @@ async def _discuss_async(
     from neev_voice.discuss.session import SessionManager
     from neev_voice.discuss.state import DiscussState, StateStack
 
-    configure_logging(json_logs=not verbose)
+    configure_logging(json_logs=not verbose, quiet=not verbose)
     settings = _get_settings()
     logger.info("discuss_command_started")
 
