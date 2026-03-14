@@ -361,9 +361,45 @@ class DiscussRunner:
         if self.session.concepts:
             self._transition(DiscussState.PRESENTATION)
             return True
-        # Enquiry-only mode — answer done, exit
+        # Enquiry-only mode — wait for user choice
+        user_choice = await self._wait_after_answer()
+        if user_choice == "enquiry":
+            self._transition(DiscussState.ENQUIRY)
+            return True
         logger.info("enquiry_only_complete")
         return False
+
+    async def _wait_after_answer(self) -> str:
+        """Wait for user to choose next action after answer playback.
+
+        Shows a prompt and monitors keyboard for SPACE (follow-up
+        question), ENTER (exit), or ESC (exit).
+
+        Returns:
+            ``"enquiry"`` if SPACE pressed, ``"exit"`` otherwise.
+        """
+        import asyncio
+
+        from rich.console import Console
+
+        from neev_voice.audio.keyboard import KeyboardMonitor, MonitorMode
+        from neev_voice.discuss.tui import make_enquiry_panel
+
+        console = Console()
+        console.print(make_enquiry_panel())
+
+        monitor = KeyboardMonitor(mode=MonitorMode.PRESENTATION)
+        monitor.start()
+
+        try:
+            while True:
+                if monitor.interrupted_event.is_set():
+                    return "enquiry"
+                if monitor.done_event.is_set() or monitor.cancelled_event.is_set():
+                    return "exit"
+                await asyncio.sleep(0.05)
+        finally:
+            monitor.stop()
 
     def _transition(self, new_state: DiscussState) -> None:
         """Transition to a new state with validation and persistence.

@@ -603,13 +603,15 @@ class TestHandlePresentationEnquiry:
         result = await runner._handle_presentation_enquiry()
         assert result is False
 
+    @patch.object(DiscussRunner, "_wait_after_answer", new_callable=AsyncMock, return_value="exit")
     @patch("neev_voice.discuss.runner.PresentationEngine")
-    async def test_presentation_enquiry_completed_no_concepts_exits(
+    async def test_presentation_enquiry_completed_no_concepts_waits(
         self,
         mock_engine_cls: MagicMock,
+        mock_wait: AsyncMock,
         runner: DiscussRunner,
     ) -> None:
-        """Completed answer in enquiry-only mode (no concepts) exits."""
+        """Completed answer in enquiry-only mode waits for user choice."""
         runner.session.state = DiscussState.PRESENTATION_ENQUIRY
         runner._current_answer = "The answer"
         runner.session.concepts = None
@@ -620,6 +622,30 @@ class TestHandlePresentationEnquiry:
 
         result = await runner._handle_presentation_enquiry()
         assert result is False
+        mock_wait.assert_called_once()
+
+    @patch.object(
+        DiscussRunner, "_wait_after_answer", new_callable=AsyncMock, return_value="enquiry"
+    )
+    @patch("neev_voice.discuss.runner.PresentationEngine")
+    async def test_presentation_enquiry_completed_no_concepts_followup(
+        self,
+        mock_engine_cls: MagicMock,
+        mock_wait: AsyncMock,
+        runner: DiscussRunner,
+    ) -> None:
+        """SPACE after answer in enquiry-only mode re-enters ENQUIRY."""
+        runner.session.state = DiscussState.PRESENTATION_ENQUIRY
+        runner._current_answer = "The answer"
+        runner.session.concepts = None
+
+        mock_engine = MagicMock()
+        mock_engine.run_answer = AsyncMock(return_value=PresentationResult(completed=True))
+        mock_engine_cls.return_value = mock_engine
+
+        result = await runner._handle_presentation_enquiry()
+        assert result is True
+        assert runner.session.state == DiscussState.ENQUIRY
 
     @patch("neev_voice.discuss.runner.PresentationEngine")
     async def test_presentation_enquiry_completed_with_concepts_goes_presentation(
@@ -763,6 +789,7 @@ class TestRunIntegration:
         assert mock_pres.run.call_count == 2
         mock_enq.run.assert_called_once()
 
+    @patch.object(DiscussRunner, "_wait_after_answer", new_callable=AsyncMock, return_value="exit")
     @patch("neev_voice.discuss.runner.PresentationEngine")
     @patch("neev_voice.discuss.runner.PrepareEnquiryEngine")
     @patch("neev_voice.discuss.runner.EnquiryEngine")
@@ -771,6 +798,7 @@ class TestRunIntegration:
         mock_enq_cls: MagicMock,
         mock_prep_enq_cls: MagicMock,
         mock_pres_cls: MagicMock,
+        mock_wait: AsyncMock,
         runner: DiscussRunner,
     ) -> None:
         """Enquiry-only flow: enquiry → prepare-enquiry → presentation-enquiry → exit."""
@@ -790,7 +818,7 @@ class TestRunIntegration:
         mock_prep_enq.run = AsyncMock(return_value="X is a pattern.")
         mock_prep_enq_cls.return_value = mock_prep_enq
 
-        # PresentationEnquiry: answer finishes (ENTER/completed) → exit
+        # PresentationEnquiry: answer finishes → waits → user exits
         mock_pres = MagicMock()
         mock_pres.run_answer = AsyncMock(return_value=PresentationResult(completed=True))
         mock_pres_cls.return_value = mock_pres
@@ -800,7 +828,9 @@ class TestRunIntegration:
         mock_enq.run.assert_called_once()
         mock_prep_enq.run.assert_called_once()
         mock_pres.run_answer.assert_called_once_with("X is a pattern.")
+        mock_wait.assert_called_once()
 
+    @patch.object(DiscussRunner, "_wait_after_answer", new_callable=AsyncMock, return_value="exit")
     @patch("neev_voice.discuss.runner.PresentationEngine")
     @patch("neev_voice.discuss.runner.PrepareEnquiryEngine")
     @patch("neev_voice.discuss.runner.EnquiryEngine")
@@ -809,6 +839,7 @@ class TestRunIntegration:
         mock_enq_cls: MagicMock,
         mock_prep_enq_cls: MagicMock,
         mock_pres_cls: MagicMock,
+        mock_wait: AsyncMock,
         runner: DiscussRunner,
     ) -> None:
         """Enquiry-only: SPACE during answer → enquiry → ESC → back to pres-enquiry → exit."""
