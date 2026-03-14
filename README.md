@@ -8,9 +8,11 @@ A Python CLI voice agent for Hindi-English mixed speech. Listens to user voice, 
 - **Hindi-English STT** via Sarvam AI (translate, codemix, formal modes) — REST API for short audio, WebSocket streaming for long audio (>30s)
 - **Text-to-speech** with Edge TTS (free) and Sarvam Bulbul providers
 - **Intent extraction** -- classifies speech into problem, solution, clue, agreement, disagreement, question
-- **Document discussion** -- walks through a document section-by-section with voice input, tracks agreement/disagreement
+- **Interactive discuss** -- state machine for document research, TTS presentation, and voice/text enquiry with resume support
+- **Enquiry-only mode** -- skip document preparation and ask questions directly (no `--files` required)
 - **Enrichment agent** -- Claude Agent SDK with read-only codebase tools for structured analysis
 - **Scratch pad** -- timestamped artifact directories for audio, transcriptions, enriched output, and discussion results
+- **Session portability** -- export/import discuss sessions as zip archives for sharing between machines
 - **Provider-agnostic LLM config** -- supports Anthropic (direct) and OpenRouter with resolved API key/base URL
 
 ## Requirements
@@ -29,7 +31,7 @@ Install globally so the `neev` command is available everywhere:
 
 ```bash
 # From GitHub (latest release)
-uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.8.1
+uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.9.3
 
 # From GitHub (latest main)
 uv tool install git+https://github.com/vishwassharma/neev-voice.git@main
@@ -45,14 +47,14 @@ To update when the remote repo changes:
 uv tool upgrade neev-voice
 
 # If pinned to a tag, reinstall with the new tag
-uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.8.1 --force
+uv tool install git+https://github.com/vishwassharma/neev-voice.git@v0.9.3 --force
 ```
 
 ### As a project dependency
 
 ```bash
 # Add to another project
-uv add git+https://github.com/vishwassharma/neev-voice.git@v0.8.1
+uv add git+https://github.com/vishwassharma/neev-voice.git@v0.9.3
 ```
 
 ### For development
@@ -123,11 +125,31 @@ neev listen --mode formal            # Devanagari output
 neev listen --verbose                # show extra details
 ```
 
-### Discuss (document review with voice)
+### Discuss (interactive research discussion)
 
 ```bash
-neev discuss path/to/document.md     # walk through sections
-neev discuss plan.md --verbose       # with detailed output
+# New session with research documents
+neev discuss --files path/to/research/
+
+# Enquiry-only mode (no documents, ask questions directly)
+neev discuss
+
+# Resume sessions
+neev discuss --continue              # continue latest session
+neev discuss --resume session-name   # resume by name
+
+# Session management
+neev discuss --list-sessions         # list all sessions
+neev discuss --export session-name   # export session to zip
+neev discuss --import path/to/zip    # import session from zip
+neev discuss --migrate               # upgrade all sessions to latest schema
+```
+
+### Enrich (text enrichment without audio)
+
+```bash
+neev enrich                          # opens editor for text input
+neev enrich --verbose                # with detailed output
 ```
 
 ### Other commands
@@ -135,6 +157,7 @@ neev discuss plan.md --verbose       # with detailed output
 ```bash
 neev version                         # show version
 neev providers                       # list available STT/TTS providers
+neev config                          # show configuration
 neev --help                          # full help
 ```
 
@@ -147,11 +170,11 @@ src/neev_voice/
     config.py            # pydantic-settings configuration
     scratch.py           # scratch pad artifact persistence
     audio/
-        keyboard.py      # push-to-talk keyboard monitor
+        keyboard.py      # push-to-talk keyboard monitor (RECORDING/PRESENTATION modes)
         recorder.py      # audio recording with VAD
     stt/
         base.py          # STT provider ABC
-        sarvam.py        # Sarvam AI STT implementation
+        sarvam.py        # Sarvam AI STT (REST + WebSocket streaming)
     tts/
         base.py          # TTS provider ABC
         edge.py          # Edge TTS + factory
@@ -161,8 +184,19 @@ src/neev_voice/
     intent/
         extractor.py     # intent classification
     discussion/
-        manager.py       # document discussion orchestrator
-tests/                   # mirrors src/ structure, 537 tests
+        manager.py       # document discussion orchestrator (legacy)
+    discuss/
+        state.py         # DiscussState enum, StateSnapshot, StateStack
+        session.py       # SessionManager with atomic JSON persistence
+        migration.py     # versioned schema migration system
+        names.py         # 3-word session name generator
+        prepare.py       # PrepareEngine - Claude CLI document research
+        presentation.py  # PresentationEngine - interruptible TTS playback
+        enquiry.py       # EnquiryEngine - voice/text enquiry capture
+        prepare_enquiry.py  # PrepareEnquiryEngine - answer research
+        runner.py        # DiscussRunner - state machine orchestrator
+        portability.py   # session export/import (zip archives)
+tests/                   # mirrors src/ structure, 828 tests
 scripts/
     generate_release_notes.py  # changelog/git-based release notes
 ```
@@ -185,11 +219,18 @@ pre-commit run --all-files
 
 ## Release Process
 
-1. Update version in `pyproject.toml`
+1. Bump version using [bump-my-version](https://github.com/callowayproject/bump-my-version):
+   ```bash
+   uv run bump-my-version bump patch   # 0.9.3 → 0.9.4
+   uv run bump-my-version bump minor   # 0.9.3 → 0.10.0
+   uv run bump-my-version bump major   # 0.9.3 → 1.0.0
+   ```
+   This updates `pyproject.toml` and all version references in `README.md`.
 2. Add entry to `CHANGELOG.md`
-3. Commit and tag: `git tag v0.x.x`
-4. Push tag: `git push origin v0.x.x`
-5. GitHub Actions builds, verifies version+changelog, and creates the release
+3. Commit on a feature branch, merge to main
+4. Tag: `git tag v0.x.x`
+5. Push: `git push origin main --tags`
+6. GitHub Actions builds, verifies version+changelog, and creates the release
 
 ## License
 
