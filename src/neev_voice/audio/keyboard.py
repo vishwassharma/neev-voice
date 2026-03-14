@@ -114,6 +114,7 @@ class KeyboardMonitor:
         self.manual_event = threading.Event()
         self.interrupted_event = threading.Event()
         self.speed_changed_event = threading.Event()
+        self.replay_event = threading.Event()
         self.playback_speed: float = 1.0
         self.state = RecordingState.IDLE
         self._thread: threading.Thread | None = None
@@ -243,6 +244,8 @@ class KeyboardMonitor:
             speeds = {"1": 1.0, "2": 1.25, "3": 1.5, "4": 2.0}
             self.playback_speed = speeds[ch]
             self.speed_changed_event.set()
+        elif ch in ("r", "R"):
+            self.replay_event.set()
 
     def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         """Start the keyboard monitor background thread.

@@ -160,6 +160,8 @@ def make_playback_panel(
     lines.append("ask  ", style="dim")
     lines.append("ENTER ", style="bold green")
     lines.append("skip  ", style="dim")
+    lines.append("R ", style="bold magenta")
+    lines.append("replay  ", style="dim")
     lines.append("ESC ", style="bold red")
     lines.append("cancel\n", style="dim")
     _append_speed_keys(lines, speed)

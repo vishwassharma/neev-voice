@@ -82,6 +82,8 @@ class PresentationEngine:
         self.prepare_dir = prepare_dir or Path(settings.discuss_base_dir) / session.name / "prepare"
         self.on_concept_done = on_concept_done
         self._playback_speed: float = 1.0
+        self._last_audio_path: Path | None = None
+        self._audio_dir = prepare_dir.parent / "audio" if prepare_dir else None
 
     def load_transcript(self, concept_index: int) -> str | None:
         """Load the TTS-ready transcript for a concept.
@@ -307,8 +309,9 @@ class PresentationEngine:
                 logger.error("presentation_tts_error", error=str(e))
                 return PresentationResult(completed=True)
 
-        # Play audio with keyboard monitoring
+        # Cache audio to session dir and play
         if audio_path:
+            audio_path = self._cache_audio(audio_path, index, title)
             return await self._play_interruptible(
                 audio_path,
                 index,
@@ -319,6 +322,36 @@ class PresentationEngine:
         # No TTS — just log and continue
         logger.info("presentation_no_audio", index=index)
         return PresentationResult(completed=False)
+
+    def _cache_audio(self, audio_path: Path, index: int, title: str) -> Path:
+        """Copy TTS audio to session directory for replay.
+
+        Args:
+            audio_path: Path to the TTS output file.
+            index: Concept/answer index.
+            title: Content title for filename.
+
+        Returns:
+            Path to the cached audio file (or original if caching fails).
+        """
+        import re
+        import shutil
+
+        if not self._audio_dir:
+            self._last_audio_path = audio_path
+            return audio_path
+
+        self._audio_dir.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r"[^a-z0-9]+", "-", (title or "answer").lower())[:30]
+        cached = self._audio_dir / f"{index:03d}_{slug}{audio_path.suffix}"
+
+        try:
+            shutil.copy2(str(audio_path), str(cached))
+            self._last_audio_path = cached
+            return cached
+        except OSError:
+            self._last_audio_path = audio_path
+            return audio_path
 
     async def _ensure_wav(self, audio_path: Path) -> Path:
         """Convert audio to WAV format if needed.
@@ -493,6 +526,13 @@ class PresentationEngine:
                             sd.play(remaining, effective_rate)
                         else:
                             break
+                    if monitor.replay_event.is_set():
+                        monitor.replay_event.clear()
+                        sd.stop()
+                        playback_offset = 0
+                        tick = 0
+                        effective_rate = int(sample_rate * self._playback_speed)
+                        sd.play(data, effective_rate)
         finally:
             monitor.stop()
 
