@@ -342,6 +342,12 @@ class PresentationEngine:
             "ffmpeg",
             "-i",
             str(audio_path),
+            "-ar",
+            "44100",
+            "-ac",
+            "1",
+            "-acodec",
+            "pcm_s16le",
             "-y",
             "-loglevel",
             "error",
@@ -413,14 +419,16 @@ class PresentationEngine:
         monitor.start()
         console = Console()
         tick = 0
-        chunk_size = int(sample_rate * 0.05)  # ~50ms of audio per tick
+        base_chunk = int(sample_rate * 0.05)  # ~50ms at original rate
 
         def _get_playback_level() -> float:
             """Compute RMS level from the audio chunk currently playing."""
-            pos = playback_offset + tick * chunk_size
+            # Account for speed: faster playback consumes more samples per tick
+            samples_per_tick = int(base_chunk * self._playback_speed)
+            pos = playback_offset + tick * samples_per_tick
             if pos >= len(data):
                 return 0.0
-            chunk = data[pos : pos + chunk_size]
+            chunk = data[pos : pos + samples_per_tick]
             if len(chunk) == 0:
                 return 0.0
             rms = float(np.sqrt(np.mean(chunk**2)))
@@ -471,8 +479,11 @@ class PresentationEngine:
                         return PresentationResult(cancelled=True)
                     if monitor.speed_changed_event.is_set():
                         monitor.speed_changed_event.clear()
+                        old_speed = self._playback_speed
                         self._playback_speed = monitor.playback_speed
-                        pos = playback_offset + tick * chunk_size
+                        # Calculate position accounting for old speed
+                        samples_elapsed = int(base_chunk * old_speed) * tick
+                        pos = playback_offset + samples_elapsed
                         sd.stop()
                         remaining = data[pos:] if pos < len(data) else np.array([])
                         playback_offset = pos
