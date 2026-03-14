@@ -215,10 +215,16 @@ def _add_directory_to_zip(zf: zipfile.ZipFile, dir_path: Path, prefix: str) -> N
     for file_path in sorted(dir_path.rglob("*")):
         if file_path.is_file():
             arcname = f"{prefix}/{file_path.relative_to(dir_path)}"
-            # Fix timestamps before 1980 (ZIP format minimum)
-            info = zipfile.ZipInfo.from_file(file_path, arcname)
-            if info.date_time[0] < 1980:
-                info.date_time = (1980, 1, 1, 0, 0, 0)
+            # Build ZipInfo safely — clamp timestamps before 1980
+            import time
+
+            st = file_path.stat()
+            dt = time.localtime(st.st_mtime)
+            if dt.tm_year < 1980:
+                date_time = (1980, 1, 1, 0, 0, 0)
+            else:
+                date_time = (dt.tm_year, dt.tm_mon, dt.tm_mday, dt.tm_hour, dt.tm_min, dt.tm_sec)
+            info = zipfile.ZipInfo(arcname, date_time=date_time)
             with open(file_path, "rb") as f:
                 zf.writestr(info, f.read())
 
