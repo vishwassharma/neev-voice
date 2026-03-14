@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-03-14
+
+### Added
+
+- **DiscussTUI** — Rich TUI wrapper for the discuss state machine (Option B architecture); renders state-specific panels at each transition while engines stay logic-only
+- **Single-call concept extraction** — `PrepareEngine` sends all documents to Claude in one call for unified categorization and ordering (was: N separate calls per document)
+- **Single-call content generation** — `PrepareEngine` generates all tutorial/explainer/transcript files in one Claude CLI call with parallel agent processing (was: N sequential calls)
+- **Concepts file migration** — `migrate_concepts_file()` normalizes concepts.json (missing fields, sequential re-indexing); `--migrate` CLI also migrates concepts
+- `discuss/tui.py` with panel builders for prepare, presentation, enquiry, answer, and recording states
+- `on_state_enter` callback on `DiscussRunner` for TUI state observation
+- 873 tests with 91.63% code coverage
+
+### Changed
+
+- **CLI `discuss`** uses `DiscussTUI` wrapper instead of bare `runner.run()`
+- **`PrepareEngine`** removed per-document `_extract_concepts()` and per-concept `_generate_content()` in favor of batch methods
+
 ## [0.9.5] - 2026-03-14
 
 ### Fixed
@@ -235,7 +252,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `detect-secrets` and `detect-private-key` pre-commit hooks
 - `no-commit-to-branch` hook protecting main branch
 
-[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.9.5...HEAD
+[Unreleased]: https://github.com/vishwassharma/neev-voice/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/vishwassharma/neev-voice/compare/v0.9.5...v0.10.0
 [0.9.5]: https://github.com/vishwassharma/neev-voice/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/vishwassharma/neev-voice/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/vishwassharma/neev-voice/compare/v0.9.0...v0.9.3
