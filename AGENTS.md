@@ -17,7 +17,7 @@ cp .env.example .env         # configure API keys
 ## Build & Test
 
 ```bash
-uv run pytest                # run full test suite (721 tests, >91% coverage)
+uv run pytest                # run full test suite (828 tests, >91% coverage)
 uv run ruff check src/ tests/  # lint
 uv run ruff format src/ tests/  # format
 pre-commit run --all-files   # all pre-commit hooks
@@ -42,6 +42,31 @@ pre-commit run --all-files   # all pre-commit hooks
 - One file at a time
 - Conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `ci:`, `chore:`
 
+## Version Bumping
+
+Version is managed by [bump-my-version](https://github.com/callowayproject/bump-my-version). Configuration is in `pyproject.toml` under `[tool.bumpversion]`.
+
+**Rules:**
+- NEVER manually edit version numbers in files. Always use `bump-my-version`.
+- Run: `uv run bump-my-version bump {patch|minor|major}`
+- This atomically updates `pyproject.toml` and all `@v{version}` references in `README.md`.
+- `commit = false` and `tag = false` — commits and tags are managed manually via the branch workflow.
+- After bumping: commit on a `chore/bump-X.Y.Z` branch, merge to main, then `git tag vX.Y.Z`.
+- ALWAYS update `CHANGELOG.md` when bumping version.
+- ALWAYS update `README.md` if version is updated (handled automatically by bump-my-version).
+
+**Workflow:**
+```bash
+uv run bump-my-version bump patch       # bump version in all files
+# update CHANGELOG.md
+git checkout -b chore/bump-X.Y.Z
+git add pyproject.toml README.md CHANGELOG.md
+git commit -m "chore: bump version to X.Y.Z"
+git checkout main && git merge chore/bump-X.Y.Z --no-ff
+git tag vX.Y.Z
+git push origin main --tags
+```
+
 ## Key Files
 
 | File | Purpose |
@@ -61,6 +86,8 @@ pre-commit run --all-files   # all pre-commit hooks
 | `src/neev_voice/discuss/enquiry.py` | EnquiryEngine - voice/text enquiry capture |
 | `src/neev_voice/discuss/prepare_enquiry.py` | PrepareEnquiryEngine - answer research |
 | `src/neev_voice/discuss/runner.py` | DiscussRunner - state machine orchestrator |
+| `src/neev_voice/discuss/portability.py` | Session export/import (zip archives) |
+| `src/neev_voice/discuss/migration.py` | Versioned schema migration system |
 | `scripts/generate_release_notes.py` | Release notes from CHANGELOG.md or git log |
 
 ## Repository Layout
