@@ -46,21 +46,25 @@ pre-commit run --all-files   # all pre-commit hooks
 
 Version is managed by [bump-my-version](https://github.com/callowayproject/bump-my-version). Configuration is in `pyproject.toml` under `[tool.bumpversion]`.
 
+**Version source of truth:** `src/neev_voice/__init__.py` (`__version__` variable).
+- `pyproject.toml` uses `dynamic = ["version"]` with `[tool.hatch.version] path` pointing to `__init__.py`.
+- `VERSION` file at repo root mirrors the version for external tooling.
+- `README.md` install URLs contain `@v{version}`.
+
 **Rules:**
 - NEVER manually edit version numbers in files. Always use `bump-my-version`.
 - Run: `uv run bump-my-version bump {patch|minor|major}`
-- This atomically updates `pyproject.toml` and all `@v{version}` references in `README.md`.
+- This atomically updates `__init__.py`, `VERSION`, `README.md` install URLs, and `current_version` in `pyproject.toml`.
 - `commit = false` and `tag = false` — commits and tags are managed manually via the branch workflow.
 - After bumping: commit on a `chore/bump-X.Y.Z` branch, merge to main, then `git tag vX.Y.Z`.
 - ALWAYS update `CHANGELOG.md` when bumping version.
-- ALWAYS update `README.md` if version is updated (handled automatically by bump-my-version).
 
 **Workflow:**
 ```bash
 uv run bump-my-version bump patch       # bump version in all files
 # update CHANGELOG.md
 git checkout -b chore/bump-X.Y.Z
-git add pyproject.toml README.md CHANGELOG.md
+git add src/neev_voice/__init__.py VERSION pyproject.toml README.md CHANGELOG.md
 git commit -m "chore: bump version to X.Y.Z"
 git checkout main && git merge chore/bump-X.Y.Z --no-ff
 git tag vX.Y.Z
