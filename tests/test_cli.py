@@ -380,28 +380,49 @@ class TestListenCancellation:
 class TestDiscussCommand:
     """Tests for discuss command async flow."""
 
-    async def test_discuss_async_missing_files(self, mocker, tmp_path):
-        """Test discuss without --files flag errors."""
-        from click.exceptions import Exit
-
+    async def test_discuss_async_no_files_enters_enquiry(self, mocker, tmp_path):
+        """Test discuss without --files creates session in ENQUIRY state."""
         from neev_voice.cli import _discuss_async
 
-        mocker.patch("neev_voice.cli._get_settings", return_value=MagicMock())
+        settings = MagicMock()
+        settings.stt_provider.value = "sarvam"
+        settings.tts_provider.value = "edge"
+        settings.discuss_base_dir = str(tmp_path / "discuss")
+        mocker.patch("neev_voice.cli._get_settings", return_value=settings)
+        mocker.patch("neev_voice.cli._find_git_root", return_value=tmp_path)
+        mocker.patch("neev_voice.stt.sarvam.get_stt_provider")
+        mocker.patch("neev_voice.tts.edge.get_tts_provider")
 
-        with pytest.raises(Exit):
-            await _discuss_async(
-                None,
-                None,
-                None,
-                False,
-                None,
-                False,
-                False,
-                None,
-                None,
-                None,
-                False,
-            )
+        mock_runner_cls = mocker.patch("neev_voice.discuss.runner.DiscussRunner")
+        mock_runner = MagicMock()
+        mock_runner.run = AsyncMock()
+        mock_runner_cls.return_value = mock_runner
+
+        await _discuss_async(
+            None,  # name
+            None,  # files — no files
+            None,  # source
+            False,  # continue
+            None,  # resume
+            False,  # reset
+            False,  # enquery
+            None,  # output
+            None,  # stt
+            None,  # tts
+            False,  # verbose
+        )
+
+        # Verify session was created in ENQUIRY state
+        from neev_voice.discuss.session import SessionManager
+        from neev_voice.discuss.state import DiscussState
+
+        mgr = SessionManager(base_dir=tmp_path / "discuss")
+        sessions = mgr.list_sessions()
+        assert len(sessions) == 1
+        session = mgr.load_session(sessions[0])
+        assert session is not None
+        assert session.state == DiscussState.ENQUIRY
+        assert session.research_path == ""
 
     async def test_discuss_async_missing_research_path(self, mocker, tmp_path):
         """Test discuss with nonexistent --files path errors."""
