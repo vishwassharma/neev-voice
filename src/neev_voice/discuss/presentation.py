@@ -291,13 +291,53 @@ class PresentationEngine:
         logger.info("presentation_no_audio", index=index)
         return PresentationResult(completed=False)
 
+    async def _ensure_wav(self, audio_path: Path) -> Path:
+        """Convert audio to WAV format if needed.
+
+        Uses ffmpeg to convert non-WAV files (e.g. MP3 from Edge TTS)
+        to WAV for playback with sounddevice/scipy.
+
+        Args:
+            audio_path: Path to the audio file.
+
+        Returns:
+            Path to a WAV file (original if already WAV, converted otherwise).
+        """
+        if audio_path.suffix.lower() == ".wav":
+            return audio_path
+
+        import asyncio
+
+        wav_path = audio_path.with_suffix(".wav")
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-i",
+            str(audio_path),
+            "-y",
+            "-loglevel",
+            "error",
+            str(wav_path),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            error_msg = stderr.decode("utf-8", errors="replace").strip()
+            logger.error("audio_conversion_failed", error=error_msg)
+            return audio_path
+
+        logger.debug("audio_converted_to_wav", source=str(audio_path), dest=str(wav_path))
+        return wav_path
+
     async def _play_interruptible(
         self, audio_path: Path, index: int, total: int
     ) -> PresentationResult:
         """Play audio with interruptible keyboard monitoring.
 
-        Runs audio playback in background and monitors keyboard for
-        SPACEBAR (interrupt), ENTER (skip), or ESC (cancel).
+        Converts non-WAV audio (e.g. MP3) to WAV before playback.
+        Monitors keyboard for SPACEBAR (interrupt), ENTER (skip),
+        or ESC (cancel).
 
         Args:
             audio_path: Path to the audio file to play.
@@ -311,6 +351,8 @@ class PresentationEngine:
         from scipy.io import wavfile
 
         from neev_voice.audio.keyboard import KeyboardMonitor, MonitorMode
+
+        audio_path = await self._ensure_wav(audio_path)
 
         try:
             sample_rate, data = wavfile.read(str(audio_path))
